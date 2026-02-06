@@ -1,0 +1,53 @@
+package ai.rever.boss.plugin.dynamic.terminaltab
+
+import ai.rever.boss.plugin.api.DynamicPlugin
+import ai.rever.boss.plugin.api.PluginContext
+import ai.rever.boss.plugin.tab.terminal.TerminalTabType
+
+/**
+ * Terminal Tab dynamic plugin - Loaded from external JAR.
+ *
+ * Provides terminal tabs in the main panel area using BossTerm library.
+ * Each tab has its own persistent terminal session.
+ *
+ * NOTE: This is a main panel TAB plugin, not a sidebar panel.
+ * It registers as a TabType via tabRegistry.registerTabType().
+ */
+class TerminalTabDynamicPlugin : DynamicPlugin {
+    override val pluginId: String = "ai.rever.boss.plugin.dynamic.terminaltab"
+    override val displayName: String = "Terminal Tab"
+    override val version: String = "1.0.0"
+    override val description: String = "Terminal tab using BossTerm library for terminal emulation"
+    override val author: String = "Risa Labs"
+    override val url: String = "https://github.com/risa-labs-inc/boss-plugin-terminal-tab"
+
+    private var pluginContext: PluginContext? = null
+
+    override fun register(context: PluginContext) {
+        pluginContext = context
+
+        val terminalTabContentProvider = context.terminalTabContentProvider
+        val tabUpdateProviderFactory = context.tabUpdateProviderFactory
+
+        if (terminalTabContentProvider == null) {
+            // Terminal tab content provider not available - cannot register
+            return
+        }
+
+        // Register as a main panel TAB TYPE
+        context.tabRegistry.registerTabType(TerminalTabType) { tabInfo, ctx ->
+            TerminalTabComponent(
+                ctx = ctx,
+                tabInfo = tabInfo,
+                terminalTabContentProvider = terminalTabContentProvider,
+                tabUpdateProviderFactory = tabUpdateProviderFactory
+            )
+        }
+    }
+
+    override fun dispose() {
+        // Unregister tab type when plugin is unloaded
+        pluginContext?.tabRegistry?.unregisterTabType(TerminalTabType.typeId)
+        pluginContext = null
+    }
+}

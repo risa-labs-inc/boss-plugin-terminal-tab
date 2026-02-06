@@ -1,0 +1,17 @@
+{
+  "manifestVersion": 1,
+  "pluginId": "ai.rever.boss.plugin.dynamic.terminaltab",
+  "displayName": "Terminal Tab",
+  "version": "1.0.0",
+  "apiVersion": "1.0.11",
+  "minBossVersion": "8.16.26",
+  "mainClass": "ai.rever.boss.plugin.dynamic.terminaltab.TerminalTabDynamicPlugin",
+  "type": "tab",
+  "tab": {
+    "typeId": "terminal",
+    "displayName": "Terminal"
+  },
+  "description": "Terminal tab using BossTerm library for terminal emulation",
+  "author": "Risa Labs",
+  "url": "https://github.com/risa-labs-inc/boss-plugin-terminal-tab"
+}
