@@ -53,7 +53,7 @@ class TerminalTabComponent(
     override fun Content() {
         // Get tab update provider for this tab
         val tabUpdateProvider = remember(config.id) {
-            tabUpdateProviderFactory?.getProvider(config.id)
+            tabUpdateProviderFactory?.createProvider(config.id, TerminalTabType.typeId)
         }
 
         // Get initial command and working directory from config if it's a TerminalTabInfo

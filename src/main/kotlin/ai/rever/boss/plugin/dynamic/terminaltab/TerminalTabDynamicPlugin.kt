@@ -35,10 +35,10 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         }
 
         // Register as a main panel TAB TYPE
-        context.tabRegistry.registerTabType(TerminalTabType) { tabInfo, ctx ->
+        context.tabRegistry.registerTabType(TerminalTabType) { config, componentContext ->
             TerminalTabComponent(
-                ctx = ctx,
-                tabInfo = tabInfo,
+                ctx = componentContext,
+                config = config,
                 terminalTabContentProvider = terminalTabContentProvider,
                 tabUpdateProviderFactory = tabUpdateProviderFactory
             )

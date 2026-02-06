@@ -1,16 +1,17 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
-    kotlin("jvm") version "2.1.0"
-    kotlin("plugin.serialization") version "2.1.0"
-    id("org.jetbrains.compose") version "1.7.3"
-    id("org.jetbrains.kotlin.plugin.compose") version "2.1.0"
+    kotlin("jvm") version "2.3.0"
+    kotlin("plugin.serialization") version "2.3.0"
+    id("org.jetbrains.compose") version "1.8.0-alpha01"
+    id("org.jetbrains.kotlin.plugin.compose") version "2.3.0"
 }
 
 group = "ai.rever.boss.plugin.dynamic"
 version = "1.0.0"
 
 repositories {
+    mavenLocal()
     mavenCentral()
     maven("https://maven.pkg.jetbrains.space/public/p/compose/dev")
     google()
