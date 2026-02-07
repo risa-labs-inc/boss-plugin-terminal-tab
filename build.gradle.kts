@@ -22,7 +22,7 @@ kotlin {
 }
 
 // Flag to switch between local development and published dependencies
-val useLocalDependencies = true
+val useLocalDependencies = false
 val bossConsolePath = "../../BossConsole"
 
 repositories {
