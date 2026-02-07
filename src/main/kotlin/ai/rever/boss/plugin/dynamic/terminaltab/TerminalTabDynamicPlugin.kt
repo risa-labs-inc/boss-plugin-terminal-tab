@@ -15,7 +15,7 @@ import ai.rever.boss.plugin.api.PluginContext
 class TerminalTabDynamicPlugin : DynamicPlugin {
     override val pluginId: String = "ai.rever.boss.plugin.dynamic.terminaltab"
     override val displayName: String = "Terminal Tab"
-    override val version: String = "1.0.0"
+    override val version: String = "1.0.2"
     override val description: String = "Terminal tab using BossTerm library for terminal emulation"
     override val author: String = "Risa Labs"
     override val url: String = "https://github.com/risa-labs-inc/boss-plugin-terminal-tab"

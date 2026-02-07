@@ -24,6 +24,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlin.reflect.full.memberProperties
 
 /**
  * Terminal tab component using BossTerm library for terminal emulation.
@@ -42,6 +43,11 @@ class TerminalTabComponent(
 
     private val coroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
+    // Extract initialCommand and workingDirectory - handles both TerminalTabData (from plugin)
+    // and TerminalTabInfo (from host) using reflection
+    private val initialCommand: String? = extractInitialCommand(config)
+    private val workingDirectory: String? = extractWorkingDirectory(config)
+
     init {
         lifecycle.subscribe(
             callbacks = object : Lifecycle.Callbacks {
@@ -50,6 +56,46 @@ class TerminalTabComponent(
                 }
             }
         )
+    }
+
+    /**
+     * Extract initialCommand from config using reflection.
+     * Handles both our TerminalTabData and host's TerminalTabInfo.
+     */
+    private fun extractInitialCommand(config: TabInfo): String? {
+        // First try our own TerminalTabData
+        if (config is TerminalTabData) {
+            return config.initialCommand
+        }
+
+        // Try to get initialCommand via reflection (for TerminalTabInfo from host)
+        return try {
+            val property = config::class.memberProperties.find { it.name == "initialCommand" }
+            property?.getter?.call(config) as? String
+        } catch (e: Exception) {
+            System.err.println("[TerminalTabComponent] Failed to extract initialCommand via reflection: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Extract workingDirectory from config using reflection.
+     * Handles both our TerminalTabData and host's TerminalTabInfo.
+     */
+    private fun extractWorkingDirectory(config: TabInfo): String? {
+        // First try our own TerminalTabData
+        if (config is TerminalTabData) {
+            return config.workingDirectory
+        }
+
+        // Try to get workingDirectory via reflection (for TerminalTabInfo from host)
+        return try {
+            val property = config::class.memberProperties.find { it.name == "workingDirectory" }
+            property?.getter?.call(config) as? String
+        } catch (e: Exception) {
+            System.err.println("[TerminalTabComponent] Failed to extract workingDirectory via reflection: ${e.message}")
+            null
+        }
     }
 
     @Composable
@@ -76,11 +122,6 @@ class TerminalTabComponent(
         val tabUpdateProvider = remember(config.id) {
             tabUpdateProviderFactory?.createProvider(config.id, TerminalTabType.typeId)
         }
-
-        // Get initial command and working directory from config if it's a TerminalTabData
-        val terminalConfig = config as? TerminalTabData
-        val initialCommand = terminalConfig?.initialCommand
-        val workingDirectory = terminalConfig?.workingDirectory
 
         // Track current title for updates
         var currentTitle by remember { mutableStateOf(config.title) }
