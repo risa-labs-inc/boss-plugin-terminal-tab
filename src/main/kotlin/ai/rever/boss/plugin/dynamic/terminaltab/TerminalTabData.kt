@@ -1,8 +1,8 @@
 package ai.rever.boss.plugin.dynamic.terminaltab
 
 import ai.rever.boss.plugin.api.TabIcon
-import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.api.TabTypeId
+import ai.rever.boss.plugin.api.TerminalTabInfoInterface
 import androidx.compose.ui.graphics.vector.ImageVector
 
 /**
@@ -11,6 +11,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
  * Contains configuration for a terminal tab instance including:
  * - Standard tab properties (id, title, icon)
  * - Terminal-specific properties (initialCommand, workingDirectory)
+ *
+ * Implements [TerminalTabInfoInterface] to allow access to terminal-specific
+ * properties through a common interface with the host's TerminalTabInfo.
  *
  * @param id Unique identifier for this tab instance
  * @param typeId Tab type identifier (matches bundled terminal tab)
@@ -26,9 +29,9 @@ data class TerminalTabData(
     override val title: String = "Terminal",
     override val icon: ImageVector = TerminalTabType.icon,
     override val tabIcon: TabIcon = TabIcon.Vector(icon),
-    val initialCommand: String? = null,
-    val workingDirectory: String? = null
-) : TabInfo {
+    override val initialCommand: String? = null,
+    override val workingDirectory: String? = null
+) : TerminalTabInfoInterface {
 
     companion object {
         /** Maximum length for terminal tab titles */

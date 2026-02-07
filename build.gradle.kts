@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "ai.rever.boss.plugin.dynamic"
-version = "1.0.2"
+version = "1.0.3"
 
 java {
     toolchain {
@@ -58,9 +58,6 @@ dependencies {
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-
-    // Kotlin reflection for extracting properties from host's TerminalTabInfo
-    implementation(kotlin("reflect"))
 }
 
 // Task to build plugin JAR with compiled classes only

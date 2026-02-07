@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.api.PluginContext
 import ai.rever.boss.plugin.api.TabComponentWithUI
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.api.TabTypeInfo
+import ai.rever.boss.plugin.api.TerminalTabInfoInterface
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -24,7 +25,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlin.reflect.full.memberProperties
 
 /**
  * Terminal tab component using BossTerm library for terminal emulation.
@@ -43,10 +43,11 @@ class TerminalTabComponent(
 
     private val coroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
-    // Extract initialCommand and workingDirectory - handles both TerminalTabData (from plugin)
-    // and TerminalTabInfo (from host) using reflection
-    private val initialCommand: String? = extractInitialCommand(config)
-    private val workingDirectory: String? = extractWorkingDirectory(config)
+    // Extract initialCommand and workingDirectory via TerminalTabInfoInterface
+    // Both our TerminalTabData and host's TerminalTabInfo implement this interface
+    private val terminalConfig = config as? TerminalTabInfoInterface
+    private val initialCommand: String? = terminalConfig?.initialCommand
+    private val workingDirectory: String? = terminalConfig?.workingDirectory
 
     init {
         lifecycle.subscribe(
@@ -56,46 +57,6 @@ class TerminalTabComponent(
                 }
             }
         )
-    }
-
-    /**
-     * Extract initialCommand from config using reflection.
-     * Handles both our TerminalTabData and host's TerminalTabInfo.
-     */
-    private fun extractInitialCommand(config: TabInfo): String? {
-        // First try our own TerminalTabData
-        if (config is TerminalTabData) {
-            return config.initialCommand
-        }
-
-        // Try to get initialCommand via reflection (for TerminalTabInfo from host)
-        return try {
-            val property = config::class.memberProperties.find { it.name == "initialCommand" }
-            property?.getter?.call(config) as? String
-        } catch (e: Exception) {
-            System.err.println("[TerminalTabComponent] Failed to extract initialCommand via reflection: ${e.message}")
-            null
-        }
-    }
-
-    /**
-     * Extract workingDirectory from config using reflection.
-     * Handles both our TerminalTabData and host's TerminalTabInfo.
-     */
-    private fun extractWorkingDirectory(config: TabInfo): String? {
-        // First try our own TerminalTabData
-        if (config is TerminalTabData) {
-            return config.workingDirectory
-        }
-
-        // Try to get workingDirectory via reflection (for TerminalTabInfo from host)
-        return try {
-            val property = config::class.memberProperties.find { it.name == "workingDirectory" }
-            property?.getter?.call(config) as? String
-        } catch (e: Exception) {
-            System.err.println("[TerminalTabComponent] Failed to extract workingDirectory via reflection: ${e.message}")
-            null
-        }
     }
 
     @Composable
