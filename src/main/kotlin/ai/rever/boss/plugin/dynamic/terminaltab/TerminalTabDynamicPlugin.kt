@@ -2,7 +2,6 @@ package ai.rever.boss.plugin.dynamic.terminaltab
 
 import ai.rever.boss.plugin.api.DynamicPlugin
 import ai.rever.boss.plugin.api.PluginContext
-import ai.rever.boss.plugin.tab.terminal.TerminalTabType
 
 /**
  * Terminal Tab dynamic plugin - Loaded from external JAR.
@@ -26,22 +25,9 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
     override fun register(context: PluginContext) {
         pluginContext = context
 
-        val terminalTabContentProvider = context.terminalTabContentProvider
-        val tabUpdateProviderFactory = context.tabUpdateProviderFactory
-
-        if (terminalTabContentProvider == null) {
-            // Terminal tab content provider not available - cannot register
-            return
-        }
-
-        // Register as a main panel TAB TYPE
-        context.tabRegistry.registerTabType(TerminalTabType) { config, componentContext ->
-            TerminalTabComponent(
-                ctx = componentContext,
-                config = config,
-                terminalTabContentProvider = terminalTabContentProvider,
-                tabUpdateProviderFactory = tabUpdateProviderFactory
-            )
+        // Register as a main panel TAB TYPE (not a sidebar panel!)
+        context.tabRegistry.registerTabType(TerminalTabType) { tabInfo, ctx ->
+            TerminalTabComponent(ctx, tabInfo, context)
         }
     }
 

@@ -1,19 +1,23 @@
 package ai.rever.boss.plugin.dynamic.terminaltab
 
+import ai.rever.boss.plugin.api.PluginContext
 import ai.rever.boss.plugin.api.TabComponentWithUI
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.api.TabTypeInfo
-import ai.rever.boss.plugin.api.TabUpdateProvider
-import ai.rever.boss.plugin.api.TabUpdateProviderFactory
-import ai.rever.boss.plugin.api.TerminalTabContentProvider
-import ai.rever.boss.plugin.tab.terminal.TerminalTabInfo
-import ai.rever.boss.plugin.tab.terminal.TerminalTabType
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 import com.arkivanov.decompose.ComponentContext
 import com.arkivanov.essenty.lifecycle.Lifecycle
 import kotlinx.coroutines.CoroutineScope
@@ -31,8 +35,7 @@ import kotlinx.coroutines.cancel
 class TerminalTabComponent(
     private val ctx: ComponentContext,
     override val config: TabInfo,
-    private val terminalTabContentProvider: TerminalTabContentProvider,
-    private val tabUpdateProviderFactory: TabUpdateProviderFactory?
+    private val context: PluginContext
 ) : TabComponentWithUI, ComponentContext by ctx {
 
     override val tabTypeInfo: TabTypeInfo = TerminalTabType
@@ -51,13 +54,31 @@ class TerminalTabComponent(
 
     @Composable
     override fun Content() {
+        // Get providers from context
+        val terminalTabContentProvider = context.terminalTabContentProvider
+        val tabUpdateProviderFactory = context.tabUpdateProviderFactory
+
+        // Check if terminal provider is available
+        if (terminalTabContentProvider == null) {
+            Box(
+                modifier = Modifier.fillMaxSize().padding(16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Terminal provider not available",
+                    color = Color(0xFFFF6B6B)
+                )
+            }
+            return
+        }
+
         // Get tab update provider for this tab
         val tabUpdateProvider = remember(config.id) {
             tabUpdateProviderFactory?.createProvider(config.id, TerminalTabType.typeId)
         }
 
-        // Get initial command and working directory from config if it's a TerminalTabInfo
-        val terminalConfig = config as? TerminalTabInfo
+        // Get initial command and working directory from config if it's a TerminalTabData
+        val terminalConfig = config as? TerminalTabData
         val initialCommand = terminalConfig?.initialCommand
         val workingDirectory = terminalConfig?.workingDirectory
 
