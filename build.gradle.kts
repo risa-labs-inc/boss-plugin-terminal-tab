@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "ai.rever.boss.plugin.dynamic"
-version = "1.0.3"
+version = "1.0.4"
 
 java {
     toolchain {
@@ -41,7 +41,7 @@ dependencies {
         implementation(files("$bossConsolePath/plugins/plugin-api-browser/build/libs/plugin-api-browser-desktop-1.0.5.jar"))
     } else {
         // Plugin API from Maven Central (for release)
-        implementation("com.risaboss:plugin-api-desktop:1.0.11")
+        implementation("com.risaboss:plugin-api-desktop:1.0.12")
     }
 
     // Compose dependencies
