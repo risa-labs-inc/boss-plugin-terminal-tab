@@ -61,3 +61,10 @@ jobs:
         with:
           files: build/libs/*.jar
           generate_release_notes: true
+
+  publish-to-store:
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/')
+    uses: risa-labs-inc/BossConsole-Releases/.github/workflows/plugin-release.yml@main
+    secrets:
+      BOSS_STORE_PLUGIN_PUBLISH_KEY: ${{ secrets.BOSS_STORE_PLUGIN_PUBLISH_KEY }}
