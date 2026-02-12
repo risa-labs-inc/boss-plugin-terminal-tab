@@ -352,11 +352,13 @@ private fun validateAndGetCanonicalPath(path: String): String? {
     }
 }
 
-private suspend fun emitTerminalLinkClick(url: String, terminalId: String?, windowId: String?) {
+private fun emitTerminalLinkClick(url: String, terminalId: String?, windowId: String?) {
     try {
         val busClass = Class.forName("ai.rever.boss.components.events.TerminalLinkEventBus")
         val instance = busClass.kotlin.objectInstance ?: busClass.getDeclaredField("INSTANCE").get(null)
-        val method = busClass.getMethod("emitLinkClick", String::class.java, String::class.java, String::class.java)
+        // Use tryEmitLinkClick (non-suspend) instead of emitLinkClick (suspend)
+        // Suspend functions can't be called via Java reflection due to hidden Continuation parameter
+        val method = busClass.getMethod("tryEmitLinkClick", String::class.java, String::class.java, String::class.java)
         method.invoke(instance, url, terminalId, windowId)
     } catch (e: Exception) {
         logger.warn(LogCategory.TERMINAL, "Failed to emit terminal link click", mapOf("url" to url))
