@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "ai.rever.boss.plugin.dynamic"
-version = "1.0.6"
+version = "1.0.7"
 
 java {
     toolchain {
@@ -25,6 +25,17 @@ kotlin {
 val useLocalDependencies = System.getenv("CI") != "true"
 val bossPluginApiPath = "../boss-plugin-api"
 
+// BossTerm version - must match host's version
+val bosstermVersion = "1.0.89"
+
+// Resolve BossTerm JAR from Gradle cache for local development
+val bosstermJar = if (useLocalDependencies) {
+    val gradleCachePath = "${System.getProperty("user.home")}/.gradle/caches/modules-2/files-2.1/com.risaboss/bossterm-compose-desktop/$bosstermVersion"
+    fileTree(gradleCachePath) { include("**/*.jar"); exclude("**/*-sources.jar") }.files.firstOrNull()
+} else {
+    null
+}
+
 repositories {
     google()
     mavenCentral()
@@ -34,10 +45,17 @@ repositories {
 dependencies {
     if (useLocalDependencies) {
         // Local development: use boss-plugin-api JAR from sibling repo
-        compileOnly(files("$bossPluginApiPath/build/libs/boss-plugin-api-1.0.20.jar"))
+        compileOnly(files("$bossPluginApiPath/build/libs/boss-plugin-api-1.0.23.jar"))
     } else {
         // CI: use downloaded JAR
         compileOnly(files("build/downloaded-deps/boss-plugin-api.jar"))
+    }
+
+    // BossTerm - compileOnly since it's provided by host classloader at runtime
+    if (useLocalDependencies && bosstermJar != null) {
+        compileOnly(files(bosstermJar))
+    } else if (!useLocalDependencies) {
+        compileOnly(files("build/downloaded-deps/bossterm-compose.jar"))
     }
 
     // Compose dependencies

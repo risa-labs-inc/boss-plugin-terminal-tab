@@ -5,6 +5,7 @@ import ai.rever.boss.plugin.api.TabComponentWithUI
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.api.TabTypeInfo
 import ai.rever.boss.plugin.api.TerminalTabInfoInterface
+import ai.rever.boss.plugin.api.TerminalTabPluginAPI
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -29,9 +30,9 @@ import kotlinx.coroutines.cancel
 /**
  * Terminal tab component using BossTerm library for terminal emulation.
  *
- * This component renders a persistent terminal session using the host's
- * TerminalTabContentProvider. Each terminal tab has its own independent
- * session that persists across composition changes.
+ * This component renders a persistent terminal session using the plugin's own
+ * TerminalTabPluginAPI. Each terminal tab has its own independent session that
+ * persists across composition changes.
  */
 class TerminalTabComponent(
     private val ctx: ComponentContext,
@@ -44,7 +45,6 @@ class TerminalTabComponent(
     private val coroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     // Extract initialCommand and workingDirectory via TerminalTabInfoInterface
-    // Both our TerminalTabData and host's TerminalTabInfo implement this interface
     private val terminalConfig = config as? TerminalTabInfoInterface
     private val initialCommand: String? = terminalConfig?.initialCommand
     private val workingDirectory: String? = terminalConfig?.workingDirectory
@@ -61,12 +61,11 @@ class TerminalTabComponent(
 
     @Composable
     override fun Content() {
-        // Get providers from context
-        val terminalTabContentProvider = context.terminalTabContentProvider
+        // Get the terminal API from the plugin system (self-referencing since we register it)
+        val terminalApi = context.getPluginAPI(TerminalTabPluginAPI::class.java)
         val tabUpdateProviderFactory = context.tabUpdateProviderFactory
 
-        // Check if terminal provider is available
-        if (terminalTabContentProvider == null) {
+        if (terminalApi == null) {
             Box(
                 modifier = Modifier.fillMaxSize().padding(16.dp),
                 contentAlignment = Alignment.Center
@@ -89,23 +88,18 @@ class TerminalTabComponent(
 
         // Cleanup when component is disposed
         DisposableEffect(config.id) {
-            onDispose {
-                // Terminal state cleanup is handled by the provider
-            }
+            onDispose { }
         }
 
-        // Render terminal content using the provider
-        terminalTabContentProvider.PersistentTabbedTerminalContent(
+        // Render terminal content using our own API
+        terminalApi.PersistentTabbedTerminalContent(
             terminalId = config.id,
             initialCommand = initialCommand,
             workingDirectory = workingDirectory,
-            onExit = {
-                // Terminal exited - the tab will be closed by the host
-            },
+            onExit = { },
             onTitleChange = { newTitle ->
                 if (newTitle != currentTitle) {
                     currentTitle = newTitle
-                    // Update tab title via TabUpdateProvider
                     tabUpdateProvider?.updateTitle(newTitle)
                 }
             }
