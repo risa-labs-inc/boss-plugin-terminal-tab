@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "ai.rever.boss.plugin.dynamic"
-version = "1.0.7"
+version = "1.0.8"
 
 java {
     toolchain {
@@ -54,8 +54,9 @@ dependencies {
     // BossTerm - compileOnly since it's provided by host classloader at runtime
     if (useLocalDependencies && bosstermJar != null) {
         compileOnly(files(bosstermJar))
-    } else if (!useLocalDependencies) {
-        compileOnly(files("build/downloaded-deps/bossterm-compose.jar"))
+    } else {
+        // CI: resolve from Maven Central
+        compileOnly("com.risaboss:bossterm-compose:$bosstermVersion")
     }
 
     // Compose dependencies
