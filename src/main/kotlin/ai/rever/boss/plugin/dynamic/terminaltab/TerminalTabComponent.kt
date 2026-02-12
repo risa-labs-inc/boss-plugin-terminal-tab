@@ -97,6 +97,12 @@ class TerminalTabComponent(
             initialCommand = initialCommand,
             workingDirectory = workingDirectory,
             onExit = { },
+            onShowSettings = {
+                val windowId = context.windowId
+                if (windowId != null) {
+                    context.settingsProvider?.openSettings(windowId, "TERMINAL")
+                }
+            },
             onTitleChange = { newTitle ->
                 if (newTitle != currentTitle) {
                     currentTitle = newTitle
