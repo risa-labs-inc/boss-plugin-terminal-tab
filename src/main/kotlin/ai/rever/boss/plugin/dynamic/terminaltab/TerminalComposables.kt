@@ -41,7 +41,8 @@ internal fun TabbedTerminalContentImpl(
     onExit: () -> Unit,
     onShowSettings: () -> Unit,
     onRunnerTerminalRemoved: ((windowId: String, terminalId: String) -> Unit)? = null,
-    onRunnerConfigRemoved: ((windowId: String, configId: String) -> Unit)? = null
+    onRunnerConfigRemoved: ((windowId: String, configId: String) -> Unit)? = null,
+    sessionEventPublisher: ((sessionId: String, eventType: ai.rever.boss.plugin.api.TerminalSessionEventType, terminalId: String?, windowId: String?) -> Unit)? = null
 ) {
     val settings by SettingsManager.instance.settings.collectAsState()
     val scope = rememberCoroutineScope()
@@ -68,6 +69,26 @@ internal fun TabbedTerminalContentImpl(
                 override fun onSessionCreated(session: ai.rever.bossterm.compose.TerminalSession) {
                     TabbedTerminalStateRegistry.registerSidebarTabId(capturedWindowId, configId, session.id)
                     state.removeSessionListener(this)
+                }
+            }
+            state.addSessionListener(listener)
+            onDispose { state.removeSessionListener(listener) }
+        } else {
+            onDispose { }
+        }
+    }
+
+    // Publish terminal session lifecycle events
+    DisposableEffect(state, sessionEventPublisher) {
+        if (sessionEventPublisher != null) {
+            val listener = object : ai.rever.bossterm.compose.tabs.TerminalSessionListener {
+                override fun onSessionCreated(session: ai.rever.bossterm.compose.TerminalSession) {
+                    sessionEventPublisher.invoke(
+                        session.id,
+                        ai.rever.boss.plugin.api.TerminalSessionEventType.CREATED,
+                        SIDEBAR_TERMINAL_ID,
+                        capturedWindowId
+                    )
                 }
             }
             state.addSessionListener(listener)
@@ -133,7 +154,8 @@ internal fun PersistentTabbedTerminalContentImpl(
     onExit: () -> Unit,
     onShowSettings: () -> Unit,
     onTitleChange: ((String) -> Unit)?,
-    onLinkClick: ((url: String, linkType: String) -> Boolean)?
+    onLinkClick: ((url: String, linkType: String) -> Boolean)?,
+    sessionEventPublisher: ((sessionId: String, eventType: ai.rever.boss.plugin.api.TerminalSessionEventType, terminalId: String?, windowId: String?) -> Unit)? = null
 ) {
     val resetGeneration by TabbedTerminalStateRegistry.resetGeneration.collectAsState()
     val settings by SettingsManager.instance.settings.collectAsState()
@@ -151,6 +173,27 @@ internal fun PersistentTabbedTerminalContentImpl(
 
     DisposableEffect(terminalId) {
         onDispose { }
+    }
+
+    // Publish terminal session lifecycle events
+    val capturedTerminalId = terminalId
+    DisposableEffect(state, sessionEventPublisher) {
+        if (sessionEventPublisher != null) {
+            val listener = object : ai.rever.bossterm.compose.tabs.TerminalSessionListener {
+                override fun onSessionCreated(session: ai.rever.bossterm.compose.TerminalSession) {
+                    sessionEventPublisher.invoke(
+                        session.id,
+                        ai.rever.boss.plugin.api.TerminalSessionEventType.CREATED,
+                        capturedTerminalId,
+                        windowId
+                    )
+                }
+            }
+            state.addSessionListener(listener)
+            onDispose { state.removeSessionListener(listener) }
+        } else {
+            onDispose { }
+        }
     }
 
     key(resetGeneration) {

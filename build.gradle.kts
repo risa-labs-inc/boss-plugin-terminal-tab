@@ -26,7 +26,7 @@ val useLocalDependencies = System.getenv("CI") != "true"
 val bossPluginApiPath = "../boss-plugin-api"
 
 // BossTerm version - must match host's version
-val bosstermVersion = "1.0.90"
+val bosstermVersion = "1.0.91"
 
 // Resolve BossTerm JAR from Gradle cache for local development
 val bosstermJar = if (useLocalDependencies) {

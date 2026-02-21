@@ -32,7 +32,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         pluginContext = context
 
         // Create and register the terminal API implementation
-        terminalApi = TerminalTabPluginAPIImpl()
+        terminalApi = TerminalTabPluginAPIImpl(context)
         context.registerPluginAPI(terminalApi!!)
 
         // Register as a main panel TAB TYPE (not a sidebar panel!)

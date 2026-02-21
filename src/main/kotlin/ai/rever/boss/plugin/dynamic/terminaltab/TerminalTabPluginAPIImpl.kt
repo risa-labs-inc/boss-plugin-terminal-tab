@@ -1,6 +1,10 @@
 package ai.rever.boss.plugin.dynamic.terminaltab
 
 import ai.rever.boss.plugin.api.PendingSidebarCommand
+import ai.rever.boss.plugin.api.PluginContext
+import ai.rever.boss.plugin.api.TerminalSessionEvent
+import ai.rever.boss.plugin.api.TerminalSessionEventType
+import ai.rever.boss.plugin.api.TerminalTabInfo
 import ai.rever.boss.plugin.api.TerminalTabPluginAPI
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
@@ -25,7 +29,9 @@ private val logger = BossLogger.forComponent("TerminalTabPluginAPIImpl")
  * Callbacks for runner terminal cleanup are set by the host via TerminalAPIAccess
  * after it obtains this API instance.
  */
-class TerminalTabPluginAPIImpl : TerminalTabPluginAPI {
+class TerminalTabPluginAPIImpl(
+    private val pluginContext: PluginContext? = null
+) : TerminalTabPluginAPI {
 
     /**
      * Callback for when a runner terminal is removed (sidebar closed).
@@ -38,6 +44,34 @@ class TerminalTabPluginAPIImpl : TerminalTabPluginAPI {
      * Set by host's TerminalAPIAccess so RunnerTerminalService can be notified.
      */
     var onRunnerConfigRemoved: ((windowId: String, configId: String) -> Unit)? = null
+
+    /**
+     * Publish a terminal session event to the application event bus.
+     */
+    internal fun publishSessionEvent(
+        sessionId: String,
+        eventType: TerminalSessionEventType,
+        terminalId: String? = null,
+        windowId: String? = null,
+        title: String? = null
+    ) {
+        try {
+            pluginContext?.applicationEventBus?.publish(
+                TerminalSessionEvent(
+                    sessionId = sessionId,
+                    eventType = eventType,
+                    terminalId = terminalId,
+                    windowId = windowId,
+                    title = title
+                )
+            )
+        } catch (e: Exception) {
+            logger.warn(LogCategory.TERMINAL, "Failed to publish terminal session event", mapOf(
+                "eventType" to eventType.name,
+                "sessionId" to sessionId
+            ), error = e)
+        }
+    }
 
     // ============================================================
     // COMPOSABLE RENDERING
@@ -60,7 +94,10 @@ class TerminalTabPluginAPIImpl : TerminalTabPluginAPI {
             onExit = onExit,
             onShowSettings = onShowSettings,
             onTitleChange = onTitleChange,
-            onLinkClick = onLinkClick
+            onLinkClick = onLinkClick,
+            sessionEventPublisher = { sessionId, eventType, tid, wid ->
+                publishSessionEvent(sessionId, eventType, tid, wid)
+            }
         )
     }
 
@@ -75,7 +112,10 @@ class TerminalTabPluginAPIImpl : TerminalTabPluginAPI {
             onExit = onExit,
             onShowSettings = onShowSettings,
             onRunnerTerminalRemoved = onRunnerTerminalRemoved,
-            onRunnerConfigRemoved = onRunnerConfigRemoved
+            onRunnerConfigRemoved = onRunnerConfigRemoved,
+            sessionEventPublisher = { sessionId, eventType, terminalId, windowId ->
+                publishSessionEvent(sessionId, eventType, terminalId, windowId)
+            }
         )
     }
 
@@ -216,5 +256,254 @@ class TerminalTabPluginAPIImpl : TerminalTabPluginAPI {
             onComplete = onComplete,
             settingsManager = SettingsManager.instance
         )
+    }
+
+    // ============================================================
+    // TERMINAL SETTINGS MANAGEMENT
+    // ============================================================
+
+    override fun getTerminalFontSize(): Float {
+        return try {
+            SettingsManager.instance.settings.value.fontSize
+        } catch (e: Exception) {
+            logger.warn(LogCategory.TERMINAL, "Failed to get terminal font size", error = e)
+            -1f
+        }
+    }
+
+    override fun setTerminalFontSize(size: Float): Boolean {
+        return try {
+            val current = SettingsManager.instance.settings.value
+            SettingsManager.instance.updateSettings(current.copy(fontSize = size))
+            true
+        } catch (e: Exception) {
+            logger.warn(LogCategory.TERMINAL, "Failed to set terminal font size", error = e)
+            false
+        }
+    }
+
+    override fun getTerminalFontFamily(): String {
+        return try {
+            SettingsManager.instance.settings.value.fontName ?: ""
+        } catch (e: Exception) {
+            logger.warn(LogCategory.TERMINAL, "Failed to get terminal font family", error = e)
+            ""
+        }
+    }
+
+    override fun setTerminalFontFamily(family: String): Boolean {
+        return try {
+            val current = SettingsManager.instance.settings.value
+            SettingsManager.instance.updateSettings(current.copy(fontName = family))
+            true
+        } catch (e: Exception) {
+            logger.warn(LogCategory.TERMINAL, "Failed to set terminal font family", error = e)
+            false
+        }
+    }
+
+    override fun isOnboardingCompleted(): Boolean {
+        return try {
+            SettingsManager.instance.settings.value.onboardingCompleted
+        } catch (e: Exception) {
+            logger.warn(LogCategory.TERMINAL, "Failed to check onboarding status", error = e)
+            true
+        }
+    }
+
+    // ============================================================
+    // TERMINAL TAB MANAGEMENT
+    // ============================================================
+
+    override fun listTabs(windowId: String, terminalId: String): List<TerminalTabInfo> {
+        return try {
+            val state = TabbedTerminalStateRegistry.get(windowId, terminalId) ?: return emptyList()
+            val tabs = state.tabs
+            val activeIndex = state.activeTabIndex
+            tabs.mapIndexed { index, tab ->
+                TerminalTabInfo(
+                    id = tab.id,
+                    title = tab.title.value,
+                    isActive = index == activeIndex,
+                    index = index
+                )
+            }
+        } catch (e: Exception) {
+            logger.warn(LogCategory.TERMINAL, "Failed to list terminal tabs", error = e)
+            emptyList()
+        }
+    }
+
+    override fun switchToTab(windowId: String, terminalId: String, tabId: String): Boolean {
+        return try {
+            val state = TabbedTerminalStateRegistry.get(windowId, terminalId) ?: return false
+            state.switchToTab(tabId)
+        } catch (e: Exception) {
+            logger.warn(LogCategory.TERMINAL, "Failed to switch terminal tab", error = e)
+            false
+        }
+    }
+
+    override fun getActiveTabIndex(windowId: String, terminalId: String): Int {
+        return try {
+            val state = TabbedTerminalStateRegistry.get(windowId, terminalId) ?: return -1
+            state.activeTabIndex
+        } catch (e: Exception) {
+            logger.warn(LogCategory.TERMINAL, "Failed to get active tab index", error = e)
+            -1
+        }
+    }
+
+    override fun getTabCount(windowId: String, terminalId: String): Int {
+        return try {
+            val state = TabbedTerminalStateRegistry.get(windowId, terminalId) ?: return 0
+            state.tabCount
+        } catch (e: Exception) {
+            logger.warn(LogCategory.TERMINAL, "Failed to get tab count", error = e)
+            0
+        }
+    }
+
+    override fun createTab(
+        windowId: String,
+        terminalId: String,
+        workingDirectory: String?,
+        initialCommand: String?
+    ): String? {
+        return try {
+            val state = TabbedTerminalStateRegistry.get(windowId, terminalId) ?: return null
+            val normalizedCommand = if (initialCommand != null) normalizeCommandForWindows(initialCommand) else null
+            state.createTab(workingDir = workingDirectory, initialCommand = normalizedCommand)
+        } catch (e: Exception) {
+            logger.warn(LogCategory.TERMINAL, "Failed to create terminal tab", error = e)
+            null
+        }
+    }
+
+    override fun getActiveWorkingDirectory(windowId: String, terminalId: String): String? {
+        return try {
+            val state = TabbedTerminalStateRegistry.get(windowId, terminalId) ?: return null
+            state.getActiveWorkingDirectory()
+        } catch (e: Exception) {
+            logger.warn(LogCategory.TERMINAL, "Failed to get active working directory", error = e)
+            null
+        }
+    }
+
+    // ============================================================
+    // SHELL UTILITIES
+    // ============================================================
+
+    override fun getDefaultShell(): String {
+        return try {
+            if (isWindows) {
+                System.getenv("COMSPEC") ?: "cmd.exe"
+            } else {
+                System.getenv("SHELL") ?: "/bin/sh"
+            }
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
+    override fun isWindows(): Boolean = isWindows
+
+    // ============================================================
+    // SPLIT PANE MANAGEMENT (T6)
+    // ============================================================
+
+    override fun splitVertical(windowId: String, terminalId: String, tabId: String?): String? {
+        return try {
+            val state = TabbedTerminalStateRegistry.get(windowId, terminalId) ?: return null
+            state.splitVertical(tabId)
+        } catch (e: Exception) {
+            logger.warn(LogCategory.TERMINAL, "Failed to split vertical", error = e)
+            null
+        }
+    }
+
+    override fun splitHorizontal(windowId: String, terminalId: String, tabId: String?): String? {
+        return try {
+            val state = TabbedTerminalStateRegistry.get(windowId, terminalId) ?: return null
+            state.splitHorizontal(tabId)
+        } catch (e: Exception) {
+            logger.warn(LogCategory.TERMINAL, "Failed to split horizontal", error = e)
+            null
+        }
+    }
+
+    override fun closeFocusedPane(windowId: String, terminalId: String, tabId: String?): Boolean {
+        return try {
+            val state = TabbedTerminalStateRegistry.get(windowId, terminalId) ?: return false
+            state.closeFocusedPane(tabId)
+        } catch (e: Exception) {
+            logger.warn(LogCategory.TERMINAL, "Failed to close focused pane", error = e)
+            false
+        }
+    }
+
+    override fun getPaneCount(windowId: String, terminalId: String, tabId: String?): Int {
+        return try {
+            val state = TabbedTerminalStateRegistry.get(windowId, terminalId) ?: return 0
+            state.getPaneCount(tabId)
+        } catch (e: Exception) {
+            logger.warn(LogCategory.TERMINAL, "Failed to get pane count", error = e)
+            0
+        }
+    }
+
+    override fun hasSplitPanes(windowId: String, terminalId: String, tabId: String?): Boolean {
+        return try {
+            val state = TabbedTerminalStateRegistry.get(windowId, terminalId) ?: return false
+            state.hasSplitPanes(tabId)
+        } catch (e: Exception) {
+            logger.warn(LogCategory.TERMINAL, "Failed to check split panes", error = e)
+            false
+        }
+    }
+
+    override fun writeToFocusedPane(windowId: String, terminalId: String, text: String, tabId: String?): Boolean {
+        return try {
+            val state = TabbedTerminalStateRegistry.get(windowId, terminalId) ?: return false
+            state.writeToFocusedPane(text, tabId)
+        } catch (e: Exception) {
+            logger.warn(LogCategory.TERMINAL, "Failed to write to focused pane", error = e)
+            false
+        }
+    }
+
+    // ============================================================
+    // REACTIVE STATE (T7)
+    // ============================================================
+
+    override fun getTabsFlow(windowId: String, terminalId: String): kotlinx.coroutines.flow.Flow<List<ai.rever.boss.plugin.api.TerminalTabInfo>>? {
+        return try {
+            val state = TabbedTerminalStateRegistry.get(windowId, terminalId) ?: return null
+            kotlinx.coroutines.flow.flow {
+                state.tabsFlow.collect { tabs ->
+                    emit(tabs.map { tab ->
+                        ai.rever.boss.plugin.api.TerminalTabInfo(
+                            id = tab.id,
+                            title = tab.title,
+                            isActive = false,
+                            index = 0
+                        )
+                    })
+                }
+            }
+        } catch (e: Exception) {
+            logger.warn(LogCategory.TERMINAL, "Failed to get tabs flow", error = e)
+            null
+        }
+    }
+
+    override fun getActiveTabIndexFlow(windowId: String, terminalId: String): kotlinx.coroutines.flow.Flow<Int>? {
+        return try {
+            val state = TabbedTerminalStateRegistry.get(windowId, terminalId) ?: return null
+            state.activeTabIndexFlow
+        } catch (e: Exception) {
+            logger.warn(LogCategory.TERMINAL, "Failed to get active tab index flow", error = e)
+            null
+        }
     }
 }
