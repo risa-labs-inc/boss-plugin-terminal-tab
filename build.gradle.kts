@@ -26,7 +26,7 @@ val useLocalDependencies = System.getenv("CI") != "true"
 val bossPluginApiPath = "../boss-plugin-api"
 
 // BossTerm version - must match host's version
-val bosstermVersion = "1.0.91"
+val bosstermVersion = "1.0.92"
 
 // Resolve BossTerm JAR from Gradle cache for local development
 val bosstermJar = if (useLocalDependencies) {
@@ -45,7 +45,7 @@ repositories {
 dependencies {
     if (useLocalDependencies) {
         // Local development: use boss-plugin-api JAR from sibling repo
-        compileOnly(files("$bossPluginApiPath/build/libs/boss-plugin-api-1.0.23.jar"))
+        compileOnly(files("$bossPluginApiPath/build/libs/boss-plugin-api-1.0.24.jar"))
     } else {
         // CI: use downloaded JAR
         compileOnly(files("build/downloaded-deps/boss-plugin-api.jar"))
