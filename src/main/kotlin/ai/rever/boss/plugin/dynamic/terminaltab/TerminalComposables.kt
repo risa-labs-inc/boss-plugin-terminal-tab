@@ -11,6 +11,7 @@ import ai.rever.bossterm.compose.rememberEmbeddableTerminalState
 import ai.rever.bossterm.compose.settings.SettingsManager
 import ai.rever.bossterm.compose.settings.TerminalSettingsOverride
 import ai.rever.bossterm.compose.onboarding.OnboardingWizard
+import ai.rever.boss.plugin.api.LocalIsPanelActive
 import ai.rever.boss.plugin.api.LocalWindowIdProvider
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.Surface
@@ -161,6 +162,15 @@ internal fun PersistentTabbedTerminalContentImpl(
     val settings by SettingsManager.instance.settings.collectAsState()
     val scope = rememberCoroutineScope()
     val windowId = LocalWindowIdProvider.current?.getWindowId() ?: return
+    // Active-panel signal from the host (BossMainWindowPanel). When the
+    // user clicks to a different panel and back, this flips false→true,
+    // which causes BossTerm's internal LaunchedEffect(tab.id, isActiveTab)
+    // to re-issue the focus requester for the focused pane — without
+    // this signal the embedded terminal stays visually present but
+    // unable to receive keystrokes until the user manually nudges a
+    // split or switches tabs. Defaults to `true` outside main panels
+    // (sidebar / dialog / embedded), preserving existing behavior.
+    val isPanelActive = LocalIsPanelActive.current
 
     val isNew = !TabbedTerminalStateRegistry.contains(windowId, terminalId)
     val state = remember(terminalId, resetGeneration) { TabbedTerminalStateRegistry.getOrCreate(windowId, terminalId) }
@@ -217,6 +227,7 @@ internal fun PersistentTabbedTerminalContentImpl(
                     state = state,
                     initialCommand = normalizedInitialCommand,
                     workingDirectory = effectiveWorkingDir,
+                    isActive = isPanelActive,
                     onExit = {
                         TabbedTerminalStateRegistry.remove(windowId, terminalId)
                         onExit()
