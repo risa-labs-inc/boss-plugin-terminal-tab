@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "ai.rever.boss.plugin.dynamic"
-version = "1.0.21"
+version = "1.0.22"
 
 java {
     toolchain {
@@ -26,7 +26,7 @@ val useLocalDependencies = System.getenv("CI") != "true"
 val bossPluginApiPath = "../boss-plugin-api"
 
 // BossTerm version - must match host's version
-val bosstermVersion = "1.0.94"
+val bosstermVersion = "1.1.96"
 
 // Resolve BossTerm JAR from Gradle cache for local development
 val bosstermJar = if (useLocalDependencies) {
@@ -45,7 +45,7 @@ repositories {
 dependencies {
     if (useLocalDependencies) {
         // Local development: use boss-plugin-api JAR from sibling repo
-        compileOnly(files("$bossPluginApiPath/build/libs/boss-plugin-api-1.0.24.jar"))
+        compileOnly(files("$bossPluginApiPath/build/libs/boss-plugin-api-1.0.37.jar"))
     } else {
         // CI: use downloaded JAR
         compileOnly(files("build/downloaded-deps/boss-plugin-api.jar"))
