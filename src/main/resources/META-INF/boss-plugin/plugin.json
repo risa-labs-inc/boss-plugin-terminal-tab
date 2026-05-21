@@ -2,11 +2,13 @@
   "manifestVersion": 1,
   "pluginId": "ai.rever.boss.plugin.dynamic.terminaltab",
   "displayName": "Terminal Tab",
-  "version": "1.0.11",
+  "version": "2.0.0",
   "apiVersion": "1.0.20",
-  "minBossVersion": "9.1.7",
+  "minBossVersion": "9.1.10",
+  "minIpcVersion": "1.1.0",
   "mainClass": "ai.rever.boss.plugin.dynamic.terminaltab.TerminalTabDynamicPlugin",
   "type": "tab",
+  "isolationMode": "out-of-process",
   "systemPlugin": true,
   "loadPriority": 10,
   "canUnload": false,
@@ -14,7 +16,7 @@
     "typeId": "terminal",
     "displayName": "Terminal"
   },
-  "description": "Terminal tab using BossTerm library for terminal emulation",
+  "description": "Terminal tab using BossTerm engine (out-of-process). The host renders cell-grid deltas streamed via IPC v1.1.0 TerminalService.",
   "author": "Risa Labs",
   "url": "https://github.com/risa-labs-inc/boss-plugin-terminal-tab"
 }
