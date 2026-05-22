@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.net.URI
 
 plugins {
     kotlin("jvm") version "2.3.0"
@@ -123,6 +124,81 @@ tasks.processResources {
         filter { line ->
             line.replace(Regex(""""version"\s*:\s*"[^"]*""""), """"version": "$version"""")
         }
+    }
+}
+
+// ─── downloadDeps: fetch upstream jars in CI ──────────────────────────────
+//
+// The shared `BossConsole-Releases/.github/workflows/plugin-release.yml`
+// downloads `boss-plugin-api.jar` automatically, but knows nothing about
+// `boss-ipc.jar` or `boss-microkernel-runtime.jar` (those are new deps
+// for OOP plugins). This task fills the gap so the workflow stays
+// generic and the plugin owns its dep list.
+//
+// Locally `useLocalDependencies` is true and we read from sibling repos —
+// this task is a no-op in that case.
+tasks.register("downloadDeps") {
+    group = "build setup"
+    description = "Download upstream JARs (boss-ipc, boss-microkernel-runtime) needed at compile time."
+    val out = file("build/downloaded-deps")
+    outputs.dir(out)
+    doLast {
+        out.mkdirs()
+        downloadIfMissing(
+            url = "https://github.com/risa-labs-inc/BossConsole-Releases/releases/latest/download/boss-ipc-$bossIpcVersion.jar",
+            dest = File(out, "boss-ipc.jar"),
+        )
+        // boss-microkernel-runtime publishes a versioned `*-all.jar`. We
+        // resolve the latest tag via the GitHub API and download that asset,
+        // saving locally under a stable filename the build references.
+        val runtimeAsset = resolveLatestMicrokernelRuntimeAsset()
+        downloadIfMissing(
+            url = "https://github.com/risa-labs-inc/boss-microkernel-runtime/releases/latest/download/$runtimeAsset",
+            dest = File(out, "boss-microkernel-runtime.jar"),
+        )
+    }
+}
+
+fun downloadIfMissing(url: String, dest: File) {
+    if (dest.exists() && dest.length() > 0) {
+        logger.lifecycle("✓ already present: ${dest.name} (${dest.length() / 1024} KB)")
+        return
+    }
+    logger.lifecycle("↓ $url")
+    val conn = URI(url).toURL().openConnection().apply {
+        setRequestProperty("User-Agent", "boss-plugin-terminal-tab-build/1.0")
+        connectTimeout = 30_000
+        readTimeout = 120_000
+    }
+    conn.getInputStream().use { input ->
+        dest.outputStream().use { output -> input.copyTo(output) }
+    }
+    if (!dest.exists() || dest.length() == 0L) {
+        throw GradleException("Failed to download from $url")
+    }
+    logger.lifecycle("  ${dest.length() / 1024} KB")
+}
+
+fun resolveLatestMicrokernelRuntimeAsset(): String {
+    // Listing assets via the GitHub API needs no auth for public repos
+    // (rate-limited to 60/hr, plenty for a release build).
+    val apiUrl = "https://api.github.com/repos/risa-labs-inc/boss-microkernel-runtime/releases/latest"
+    val conn = URI(apiUrl).toURL().openConnection().apply {
+        setRequestProperty("User-Agent", "boss-plugin-terminal-tab-build/1.0")
+        setRequestProperty("Accept", "application/vnd.github+json")
+        connectTimeout = 15_000
+        readTimeout = 30_000
+    }
+    val body = conn.getInputStream().bufferedReader().use { it.readText() }
+    val match = Regex(""""name"\s*:\s*"(boss-microkernel-runtime-[^"]+-all\.jar)"""")
+        .find(body)
+        ?: throw GradleException("No -all.jar asset found in latest microkernel-runtime release")
+    return match.groupValues[1]
+}
+
+tasks.named("compileKotlin") {
+    if (!useLocalDependencies) {
+        dependsOn("downloadDeps")
     }
 }
 
