@@ -1,12 +1,15 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import java.net.URI
 
 plugins {
     kotlin("jvm") version "2.3.0"
+    id("org.jetbrains.compose") version "1.10.0"
+    id("org.jetbrains.kotlin.plugin.compose") version "2.3.0"
 }
 
 group = "ai.rever.boss.plugin.dynamic"
-version = "2.0.3"
+// 2.1.0 signals the new contract: plugin bundles bossterm-compose privately;
+// host no longer carries it. Independent release cadence from the host.
+version = "2.1.0"
 
 java {
     toolchain {
@@ -20,20 +23,13 @@ kotlin {
     }
 }
 
-// ─── Local dev paths to sibling repos ─────────────────────────────────────
+// Auto-detect CI environment
 val useLocalDependencies = System.getenv("CI") != "true"
 val bossPluginApiPath = "../boss-plugin-api"
-val microkernelRuntimePath = "../boss-microkernel-runtime"
-val bossConsoleUpstream = "../../BossConsole/build/upstream-artifacts"
 
-// ─── Version pins ─────────────────────────────────────────────────────────
-// bossterm-core supplies the PTY + emulator + cell-grid engine. The Compose
-// UI module (bossterm-compose) is intentionally NOT a dependency — terminal
-// rendering moves to the host in the OOP architecture.
+// BossTerm version is now private to this plugin. Bumping bossterm only
+// requires re-releasing this plugin, not BossConsole.
 val bosstermVersion = "1.1.96"
-val pty4jVersion = "0.13.9"
-val bossIpcVersion = "1.1.0"
-val microkernelRuntimeVersion = providers.gradleProperty("runtime.version").orElse("1.0.0").get()
 
 repositories {
     google()
@@ -42,163 +38,88 @@ repositories {
 }
 
 dependencies {
-    // ─── compileOnly — provided by microkernel runtime classpath at spawn ─
-    //
-    // The OOP plugin's child JVM is launched with boss-microkernel-runtime's
-    // fatJar as its main class. That fatJar bundles boss-ipc, plugin-api-core,
-    // and plugin-api-ipc, so the plugin only needs them at compile time. The
-    // plugin's own JAR stays small and ships only plugin-specific classes.
-
     if (useLocalDependencies) {
+        // Local development: use boss-plugin-api JAR from sibling repo
         compileOnly(files("$bossPluginApiPath/build/libs/boss-plugin-api-1.0.37.jar"))
-        compileOnly(files("$microkernelRuntimePath/build/libs/boss-microkernel-runtime-$microkernelRuntimeVersion.jar"))
-        compileOnly(files("$bossConsoleUpstream/boss-ipc-$bossIpcVersion.jar"))
     } else {
+        // CI: use downloaded JAR
         compileOnly(files("build/downloaded-deps/boss-plugin-api.jar"))
-        compileOnly(files("build/downloaded-deps/boss-microkernel-runtime.jar"))
-        compileOnly(files("build/downloaded-deps/boss-ipc.jar"))
     }
 
-    // ─── Bundled into the plugin JAR (child-classloader-only) ─────────────
-    //
-    // bossterm-core + pty4j are the engine. They are NOT provided by the
-    // host (the whole point of the migration is to keep bossterm out of the
-    // host classpath), so the plugin must bring them.
+    // bossterm-compose is BUNDLED into the plugin JAR at runtime — it is NOT
+    // on the host's classpath as of BossConsole 9.1.11. The plugin's
+    // classloader resolves these classes from its own URLs; Compose Multiplatform
+    // runtime classes still come from the host classloader (shared Compose
+    // runtime — only one Window owner per JVM).
+    implementation("com.risaboss:bossterm-compose:$bosstermVersion")
 
-    implementation("com.risaboss:bossterm-core:$bosstermVersion")
-    implementation("org.jetbrains.pty4j:pty4j:$pty4jVersion")
+    // Compose dependencies — compileOnly so we don't duplicate the host's
+    // Compose runtime in the plugin JAR. The plugin's @Composable functions
+    // run inside the host's Compose runtime via classloader parent delegation.
+    compileOnly(compose.desktop.currentOs)
+    compileOnly(compose.runtime)
+    compileOnly(compose.ui)
+    compileOnly(compose.foundation)
+    compileOnly(compose.material)
+    compileOnly(compose.materialIconsExtended)
 
-    // ─── Required to compile against gRPC stubs ───────────────────────────
-    //
-    // gRPC + protobuf-kotlin are bundled by boss-microkernel-runtime's fatJar
-    // at runtime, but we need them on the compile classpath so the generated
-    // TerminalServiceCoroutineImplBase resolves.
+    // Decompose for ComponentContext — provided by host
+    compileOnly("com.arkivanov.decompose:decompose:3.3.0")
+    compileOnly("com.arkivanov.essenty:lifecycle:2.5.0")
 
-    compileOnly("io.grpc:grpc-stub:1.72.0")
-    compileOnly("io.grpc:grpc-kotlin-stub:1.4.3")
-    compileOnly("io.grpc:grpc-protobuf:1.72.0")
-    compileOnly("com.google.protobuf:protobuf-java:4.31.1")
-    compileOnly("com.google.protobuf:protobuf-kotlin:4.31.1")
-
-    // Coroutines (also bundled by microkernel runtime)
+    // Coroutines — provided by host
     compileOnly("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-
-    // SLF4J — provided by microkernel runtime at runtime; needed here so the
-    // logger statements compile.
-    compileOnly("org.slf4j:slf4j-api:2.0.17")
 }
 
-// ─── Plugin JAR — compiled classes only, deps come from runtime ─────────
+// Task to build plugin JAR with compiled classes + bossterm-compose bundled.
 tasks.register<Jar>("buildPluginJar") {
     archiveFileName.set("boss-plugin-terminal-tab-${version}.jar")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 
     manifest {
         attributes(
-            "Implementation-Title" to "BOSS Terminal Tab Plugin (OOP)",
+            "Implementation-Title" to "BOSS Terminal Tab Plugin",
             "Implementation-Version" to version,
             "Main-Class" to "ai.rever.boss.plugin.dynamic.terminaltab.TerminalTabDynamicPlugin"
         )
     }
 
+    // Include compiled classes
     from(sourceSets.main.get().output)
+
+    // Include plugin manifest
     from("src/main/resources")
 
-    // Bundle bossterm-core + pty4j inside the plugin JAR so the child JVM's
-    // BOSS_PLUGIN_CLASSPATH = this JAR is sufficient. The microkernel runtime
-    // provides gRPC, protobuf, coroutines, boss-ipc — everything else.
+    // Bundle bossterm-compose + its transitive native-access deps (bossterm-core,
+    // pty4j, JNA, ICU4J, purejavacomm). Compose Multiplatform / decompose /
+    // kotlinx-coroutines / Material icons remain on the host classloader (the
+    // plugin's classloader delegates to parent for them).
+    //
+    // Filename caveat: `com.risaboss:bossterm-compose-desktop` publishes its
+    // JAR as `compose-ui-desktop-X.Y.Z.jar` (KMP target rename), so the filter
+    // matches by content too. Since this plugin doesn't depend on
+    // bosseditor-compose-desktop, there's no collision.
     from({
         configurations.runtimeClasspath.get().filter { jar ->
             val name = jar.name
-            name.contains("bossterm-core") ||
+            name.contains("bossterm-compose") ||
+                name.contains("bossterm-core") ||
+                name.startsWith("compose-ui-desktop-") ||  // bossterm-compose-desktop publishes under this name
                 name.startsWith("pty4j-") ||
-                // pty4j drags purejavacomm + slf4j-related; bossterm-core
-                // already drags slf4j-api. Include purejavacomm.
-                name.startsWith("purejavacomm-")
+                name.startsWith("purejavacomm-") ||
+                name.startsWith("jna-") ||
+                name.startsWith("icu4j-") ||
+                name.startsWith("trove4j-")
         }.map { zipTree(it) }
     })
 }
 
+// Sync version from build.gradle.kts into plugin.json (single source of truth)
 tasks.processResources {
     filesMatching("**/plugin.json") {
         filter { line ->
             line.replace(Regex(""""version"\s*:\s*"[^"]*""""), """"version": "$version"""")
         }
-    }
-}
-
-// ─── downloadDeps: fetch upstream jars in CI ──────────────────────────────
-//
-// The shared `BossConsole-Releases/.github/workflows/plugin-release.yml`
-// downloads `boss-plugin-api.jar` automatically, but knows nothing about
-// `boss-ipc.jar` or `boss-microkernel-runtime.jar` (those are new deps
-// for OOP plugins). This task fills the gap so the workflow stays
-// generic and the plugin owns its dep list.
-//
-// Locally `useLocalDependencies` is true and we read from sibling repos —
-// this task is a no-op in that case.
-tasks.register("downloadDeps") {
-    group = "build setup"
-    description = "Download upstream JARs (boss-ipc, boss-microkernel-runtime) needed at compile time."
-    val out = file("build/downloaded-deps")
-    outputs.dir(out)
-    doLast {
-        out.mkdirs()
-        downloadIfMissing(
-            url = "https://github.com/risa-labs-inc/BossConsole-Releases/releases/latest/download/boss-ipc-$bossIpcVersion.jar",
-            dest = File(out, "boss-ipc.jar"),
-        )
-        // boss-microkernel-runtime publishes a versioned `*-all.jar`. We
-        // resolve the latest tag via the GitHub API and download that asset,
-        // saving locally under a stable filename the build references.
-        val runtimeAsset = resolveLatestMicrokernelRuntimeAsset()
-        downloadIfMissing(
-            url = "https://github.com/risa-labs-inc/boss-microkernel-runtime/releases/latest/download/$runtimeAsset",
-            dest = File(out, "boss-microkernel-runtime.jar"),
-        )
-    }
-}
-
-fun downloadIfMissing(url: String, dest: File) {
-    if (dest.exists() && dest.length() > 0) {
-        logger.lifecycle("✓ already present: ${dest.name} (${dest.length() / 1024} KB)")
-        return
-    }
-    logger.lifecycle("↓ $url")
-    val conn = URI(url).toURL().openConnection().apply {
-        setRequestProperty("User-Agent", "boss-plugin-terminal-tab-build/1.0")
-        connectTimeout = 30_000
-        readTimeout = 120_000
-    }
-    conn.getInputStream().use { input ->
-        dest.outputStream().use { output -> input.copyTo(output) }
-    }
-    if (!dest.exists() || dest.length() == 0L) {
-        throw GradleException("Failed to download from $url")
-    }
-    logger.lifecycle("  ${dest.length() / 1024} KB")
-}
-
-fun resolveLatestMicrokernelRuntimeAsset(): String {
-    // Listing assets via the GitHub API needs no auth for public repos
-    // (rate-limited to 60/hr, plenty for a release build).
-    val apiUrl = "https://api.github.com/repos/risa-labs-inc/boss-microkernel-runtime/releases/latest"
-    val conn = URI(apiUrl).toURL().openConnection().apply {
-        setRequestProperty("User-Agent", "boss-plugin-terminal-tab-build/1.0")
-        setRequestProperty("Accept", "application/vnd.github+json")
-        connectTimeout = 15_000
-        readTimeout = 30_000
-    }
-    val body = conn.getInputStream().bufferedReader().use { it.readText() }
-    val match = Regex(""""name"\s*:\s*"(boss-microkernel-runtime-[^"]+-all\.jar)"""")
-        .find(body)
-        ?: throw GradleException("No -all.jar asset found in latest microkernel-runtime release")
-    return match.groupValues[1]
-}
-
-tasks.named("compileKotlin") {
-    if (!useLocalDependencies) {
-        dependsOn("downloadDeps")
     }
 }
 
