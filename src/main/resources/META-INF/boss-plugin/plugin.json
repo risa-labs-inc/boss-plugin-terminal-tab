@@ -4,7 +4,7 @@
   "displayName": "Terminal Tab",
   "version": "2.1.0",
   "apiVersion": "1.0.20",
-  "minBossVersion": "9.1.11",
+  "minBossVersion": "9.2.0",
   "mainClass": "ai.rever.boss.plugin.dynamic.terminaltab.TerminalTabDynamicPlugin",
   "type": "tab",
   "systemPlugin": true,
@@ -14,7 +14,7 @@
     "typeId": "terminal",
     "displayName": "Terminal"
   },
-  "description": "Terminal tab using BossTerm library. As of v2.x, bossterm-compose is bundled inside the plugin JAR (BossConsole >= 9.1.11 no longer carries it), so bossterm updates can ship without a host release.",
+  "description": "Terminal tab using BossTerm library. As of v2.x, bossterm-compose is bundled inside the plugin JAR (BossConsole >= 9.2.0 no longer carries it), so bossterm updates can ship without a host release.",
   "author": "Risa Labs",
   "url": "https://github.com/risa-labs-inc/boss-plugin-terminal-tab"
 }
