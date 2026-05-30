@@ -2,7 +2,6 @@ package ai.rever.boss.plugin.dynamic.terminaltab
 
 import ai.rever.boss.plugin.api.DynamicPlugin
 import ai.rever.boss.plugin.api.PluginContext
-import java.io.File
 
 /**
  * Terminal Tab dynamic plugin - Loaded from external JAR.
@@ -46,24 +45,28 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
     }
 
     /**
-     * BossConsole hosts set the JVM-wide `pty4j.preferred.native.folder` system
-     * property and try to pre-extract `libpty` into it from the host classpath.
-     * Since the terminal — and pty4j — now live inside this plugin (not the
-     * host), that extraction finds nothing and the folder stays empty. pty4j
-     * then loads its native *only* from that pinned folder and ignores the
-     * `libpty` bundled in THIS plugin's JAR, so every shell spawn fails with
-     * "Failed to spawn process".
+     * BossConsole hosts pin the JVM-wide `pty4j.preferred.native.folder` and
+     * pre-extract `libpty` into it from the *host* classpath. Now that the
+     * terminal — and pty4j — live inside this plugin (not the host), that
+     * folder is empty on hosts that no longer carry pty4j, so pty4j loads its
+     * native *only* from the pinned (empty) folder and ignores the `libpty`
+     * bundled in THIS plugin's JAR → every shell spawn fails with "Failed to
+     * spawn process".
      *
-     * If the pinned folder has no usable `libpty`, clear the property so pty4j
-     * falls back to extracting the native from this plugin's JAR (its default
-     * behaviour). The guard leaves correctly-populated folders (e.g. a signed
-     * `.app` bundle) untouched. Runs at plugin load, before any PTY is spawned.
+     * This plugin always carries its own pty4j native, so clearing the pin is
+     * always correct: pty4j then self-extracts the native from this plugin's
+     * JAR (its default behaviour), which works on every host — including the
+     * release `.app`, where the host-provided folder is merely redundant.
+     *
+     * We clear unconditionally rather than probing the folder: pty4j's pinned
+     * lookup uses a `<folder>/<platform>` layout that's easy to mis-check
+     * (e.g. a sibling `pty4j-darwin/` left by a previous self-extraction can
+     * make the folder look populated when the platform subdir is empty).
+     * Runs at plugin load, before any terminal tab — and thus any PTY — exists.
      */
     private fun neutralizeStalePty4jNativeFolder() {
         try {
-            val pref = System.getProperty("pty4j.preferred.native.folder") ?: return
-            val hasLib = File(pref).walkTopDown().any { it.name.startsWith("libpty.") }
-            if (!hasLib) {
+            if (System.getProperty("pty4j.preferred.native.folder") != null) {
                 System.clearProperty("pty4j.preferred.native.folder")
             }
         } catch (_: Throwable) {
