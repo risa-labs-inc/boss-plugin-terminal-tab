@@ -2,6 +2,7 @@ package ai.rever.boss.plugin.dynamic.terminaltab
 
 import ai.rever.boss.plugin.api.DynamicPlugin
 import ai.rever.boss.plugin.api.PluginContext
+import java.io.File
 
 /**
  * Terminal Tab dynamic plugin - Loaded from external JAR.
@@ -29,6 +30,9 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
     private var terminalApi: TerminalTabPluginAPIImpl? = null
 
     override fun register(context: PluginContext) {
+        // Must run before any terminal tab (and thus any pty4j spawn) is created.
+        neutralizeStalePty4jNativeFolder()
+
         pluginContext = context
 
         // Create and register the terminal API implementation
@@ -38,6 +42,32 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         // Register as a main panel TAB TYPE (not a sidebar panel!)
         context.tabRegistry.registerTabType(TerminalTabType) { tabInfo, ctx ->
             TerminalTabComponent(ctx, tabInfo, context)
+        }
+    }
+
+    /**
+     * BossConsole hosts set the JVM-wide `pty4j.preferred.native.folder` system
+     * property and try to pre-extract `libpty` into it from the host classpath.
+     * Since the terminal — and pty4j — now live inside this plugin (not the
+     * host), that extraction finds nothing and the folder stays empty. pty4j
+     * then loads its native *only* from that pinned folder and ignores the
+     * `libpty` bundled in THIS plugin's JAR, so every shell spawn fails with
+     * "Failed to spawn process".
+     *
+     * If the pinned folder has no usable `libpty`, clear the property so pty4j
+     * falls back to extracting the native from this plugin's JAR (its default
+     * behaviour). The guard leaves correctly-populated folders (e.g. a signed
+     * `.app` bundle) untouched. Runs at plugin load, before any PTY is spawned.
+     */
+    private fun neutralizeStalePty4jNativeFolder() {
+        try {
+            val pref = System.getProperty("pty4j.preferred.native.folder") ?: return
+            val hasLib = File(pref).walkTopDown().any { it.name.startsWith("libpty.") }
+            if (!hasLib) {
+                System.clearProperty("pty4j.preferred.native.folder")
+            }
+        } catch (_: Throwable) {
+            // Best-effort: never let native-path housekeeping block plugin load.
         }
     }
 

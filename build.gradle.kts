@@ -9,7 +9,7 @@ plugins {
 group = "ai.rever.boss.plugin.dynamic"
 // 2.1.0 signals the new contract: plugin bundles bossterm-compose privately;
 // host no longer carries it. Independent release cadence from the host.
-version = "2.1.3"
+version = "2.1.4"
 
 java {
     toolchain {
