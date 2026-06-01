@@ -9,7 +9,7 @@ plugins {
 group = "ai.rever.boss.plugin.dynamic"
 // 2.1.0 signals the new contract: plugin bundles bossterm-compose privately;
 // host no longer carries it. Independent release cadence from the host.
-version = "2.1.5"
+version = "2.1.6"
 
 java {
     toolchain {
@@ -29,7 +29,7 @@ val bossPluginApiPath = "../boss-plugin-api"
 
 // BossTerm version is now private to this plugin. Bumping bossterm only
 // requires re-releasing this plugin, not BossConsole.
-val bosstermVersion = "1.1.96"
+val bosstermVersion = "1.1.99"
 
 repositories {
     google()
