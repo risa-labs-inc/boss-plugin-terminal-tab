@@ -29,7 +29,7 @@ val bossPluginApiPath = "../boss-plugin-api"
 
 // BossTerm version is now private to this plugin. Bumping bossterm only
 // requires re-releasing this plugin, not BossConsole.
-val bosstermVersion = "1.1.96"
+val bosstermVersion = "1.1.99"
 
 repositories {
     google()
