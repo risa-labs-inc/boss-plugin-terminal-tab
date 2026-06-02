@@ -202,6 +202,24 @@ internal fun PersistentTabbedTerminalContentImpl(
                         windowId
                     )
                 }
+
+                // Explicitly override the remaining TerminalSessionListener default
+                // methods. BossTerm is built with -Xjvm-default=disable, so any
+                // unimplemented default generates a synthetic bridge to
+                // TerminalSessionListener$DefaultImpls — a class resolved lazily on the
+                // first call (session close), which happens during window-close teardown
+                // AFTER the plugin classloader is closed -> NoClassDefFoundError.
+                // Overriding both removes the bridge entirely. See BossConsole#764.
+                override fun onSessionClosed(session: ai.rever.bossterm.compose.TerminalSession) {
+                    sessionEventPublisher.invoke(
+                        session.id,
+                        ai.rever.boss.plugin.api.TerminalSessionEventType.DESTROYED,
+                        capturedTerminalId,
+                        windowId
+                    )
+                }
+
+                override fun onAllSessionsClosed() {}
             }
             state.addSessionListener(listener)
             onDispose { state.removeSessionListener(listener) }
