@@ -13,7 +13,7 @@ group = "ai.rever.boss.plugin.dynamic"
 // bundling ktor-server-cio + the MCP Kotlin SDK.
 // 2.3.0: adds host-facing MCP tools (run_in_sidebar, cli) that drive the
 // sidebar/Runner and boss:// deep-link verbs via BossTermMcpConfig.additionalTools.
-version = "2.3.0"
+version = "2.3.1"
 
 java {
     toolchain {
