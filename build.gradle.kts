@@ -11,7 +11,7 @@ group = "ai.rever.boss.plugin.dynamic"
 // host no longer carries it. Independent release cadence from the host.
 // 2.2.0: plugin now hosts the BossTerm MCP server ("bossconsole" endpoint),
 // bundling ktor-server-cio + the MCP Kotlin SDK.
-version = "2.2.0"
+version = "2.2.1"
 
 java {
     toolchain {
