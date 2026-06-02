@@ -11,7 +11,9 @@ group = "ai.rever.boss.plugin.dynamic"
 // host no longer carries it. Independent release cadence from the host.
 // 2.2.0: plugin now hosts the BossTerm MCP server ("bossconsole" endpoint),
 // bundling ktor-server-cio + the MCP Kotlin SDK.
-version = "2.2.1"
+// 2.3.0: adds host-facing MCP tools (run_in_sidebar, cli) that drive the
+// sidebar/Runner and boss:// deep-link verbs via BossTermMcpConfig.additionalTools.
+version = "2.3.0"
 
 java {
     toolchain {
@@ -40,6 +42,14 @@ repositories {
     mavenCentral()
     maven("https://maven.pkg.jetbrains.space/public/p/compose/dev")
 }
+
+// NOTE: the bundled ktor stays at bossterm's native version (3.3.2 client /
+// 3.2.3 server), which is what the MCP Kotlin SDK 0.8.3 is built against. The
+// host (BossConsole) is pinned to ktor 3.4.3 + kotlinx-serialization 1.9.0
+// (the stack the MCP SDK supports), so the bundled ktor's parent-first
+// kotlinx-serialization resolves to a matching 1.9.x — no encodeToSink / sse
+// signature skew. Do NOT force ktor to 3.5.x here: the MCP SDK only supports
+// ktor <= 3.3.x (its sse() signature differs in 3.5).
 
 dependencies {
     if (useLocalDependencies) {
@@ -123,13 +133,30 @@ tasks.register<Jar>("buildPluginJar") {
                 // are deliberately omitted (parent-first; provided by the host).
                 name.startsWith("ktor-") ||
                 name.startsWith("kotlin-sdk-") ||
-                name.startsWith("kotlinx-io-")
+                name.startsWith("kotlinx-io-") ||
+                // Transitive runtime deps of the MCP SDK + Ktor that are also
+                // child-first (not host-shared) — without these the MCP server
+                // dies at class-init with NoClassDefFoundError:
+                //   kotlin-logging (io.github.oshai)      — MCP SDK logging
+                //   kotlinx-collections-immutable          — MCP SDK
+                //   kotlinx-datetime                       — MCP SDK
+                //   atomicfu                               — Ktor/coroutines runtime
+                //   typesafe config                        — Ktor server config
+                name.startsWith("kotlin-logging") ||
+                name.startsWith("kotlinx-collections-immutable") ||
+                name.startsWith("kotlinx-datetime") ||
+                name.startsWith("atomicfu") ||
+                name.startsWith("config-")
         }.map { zipTree(it) }
     })
 }
 
-// Sync version from build.gradle.kts into plugin.json (single source of truth)
+// Sync version from build.gradle.kts into plugin.json (single source of truth).
+// Declare `version` as a task input so a version-only bump invalidates the task —
+// otherwise processResources stays UP-TO-DATE (its file inputs are unchanged) and
+// ships a stale plugin.json whose version disagrees with the JAR filename.
 tasks.processResources {
+    inputs.property("pluginVersion", version)
     filesMatching("**/plugin.json") {
         filter { line ->
             line.replace(Regex(""""version"\s*:\s*"[^"]*""""), """"version": "$version"""")

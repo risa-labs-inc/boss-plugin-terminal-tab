@@ -106,7 +106,11 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
                 displayName = "Boss",
                 serverVersion = version,
                 defaultEnabled = true,
-                defaultPort = 7677
+                defaultPort = 7677,
+                // Host-facing tools (run_in_sidebar, cli) that drive BossConsole's
+                // sidebar/Runner and boss:// deep-link verbs over the same MCP
+                // endpoint as the built-in terminal tools. See McpHostTools.kt.
+                additionalTools = bossHostMcpTools
             )
             TerminalMcpConfigHolder.config = config
             mcpManager = BossTermMcpManager(
