@@ -70,6 +70,11 @@ private fun registerRunInSidebar(server: Server) {
                     put("description", "When true (with config_id), re-run in the existing tab " +
                             "instead of opening a new one. Default false.")
                 }
+                putJsonObject("name") {
+                    put("type", "string")
+                    put("description", "Optional label for this run in the top-bar runner dropdown. " +
+                            "Defaults to the command.")
+                }
             },
             required = listOf("command")
         )
@@ -80,8 +85,16 @@ private fun registerRunInSidebar(server: Server) {
             return@addTool errorResult("Missing required argument: command")
         }
         val workingDir = args.str("working_dir")
-        val configId = args.str("config_id")
         val isRerun = args.bool("is_rerun") ?: false
+
+        // Stable id used as BOTH the sidebar tab id and the runner config id, so the
+        // top-bar runner's running-state and the tab's close-cleanup line up. When the
+        // caller doesn't supply one, derive a stable id from the command so re-runs of
+        // the same command reuse the same tab/entry instead of piling up.
+        val configId = args.str("config_id") ?: "mcp-run-${command.hashCode()}"
+        val runName = args.str("name")
+            ?: command.trim().lineSequence().firstOrNull()?.take(60)?.ifBlank { null }
+            ?: command
 
         val windowId = focusedWindowId()
             ?: return@addTool errorResult("No focused BossConsole window; focus a window and retry.")
@@ -105,12 +118,25 @@ private fun registerRunInSidebar(server: Server) {
         // already created/re-ran the tab above.
         val panelRequested = processDeepLink("boss://plugin?id=terminal")
 
+        // Register the run with the host runner so the top-bar runner reflects it
+        // (selects the config + shows running/Stop). Best-effort; the command still
+        // runs even if the host class isn't reachable.
+        val runnerUpdated = registerSidebarRunWithRunner(
+            windowId = windowId,
+            configId = configId,
+            command = command,
+            workingDir = workingDir,
+            name = runName
+        )
+
         jsonResult(isError = false) {
             put("ok", started)
             put("windowId", windowId)
             put("command", command)
+            put("configId", configId)
             put("isRerun", isRerun)
             put("panelOpenRequested", panelRequested)
+            put("runnerUpdated", runnerUpdated)
         }
     }
 }
@@ -270,6 +296,33 @@ private fun processDeepLink(uri: String): Boolean = try {
     true
 } catch (t: Throwable) {
     hostToolsLogger.warn(LogCategory.SYSTEM, "processDeepLink reflection failed", error = t)
+    false
+}
+
+/**
+ * Tell the host runner about a sidebar run so the top-bar runner reflects it:
+ * selects the config in the window's dropdown and marks it running (Stop enabled).
+ * Reflects into `RunnerTerminalService.registerSidebarRun` (non-suspend, primitive
+ * args). The sidebar terminal is already opened by [TabbedTerminalStateRegistry];
+ * this only updates runner state, which the host clears on tab close. Returns false
+ * if the host class isn't reachable.
+ */
+private fun registerSidebarRunWithRunner(
+    windowId: String,
+    configId: String,
+    command: String,
+    workingDir: String?,
+    name: String
+): Boolean = try {
+    val clazz = Class.forName("ai.rever.boss.run.RunnerTerminalService")
+    val instance = clazz.getField("INSTANCE").get(null)
+    clazz.getMethod(
+        "registerSidebarRun",
+        String::class.java, String::class.java, String::class.java, String::class.java, String::class.java
+    ).invoke(instance, windowId, configId, command, workingDir, name)
+    true
+} catch (t: Throwable) {
+    hostToolsLogger.warn(LogCategory.TERMINAL, "registerSidebarRun reflection failed", error = t)
     false
 }
 
