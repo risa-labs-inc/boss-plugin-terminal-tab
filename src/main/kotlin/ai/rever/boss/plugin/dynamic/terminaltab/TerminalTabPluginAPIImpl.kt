@@ -8,10 +8,12 @@ import ai.rever.boss.plugin.api.TerminalTabInfo
 import ai.rever.boss.plugin.api.TerminalTabPluginAPI
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
+import ai.rever.bossterm.compose.mcp.LocalBossTermMcpConfig
 import ai.rever.bossterm.compose.onboarding.OnboardingWizard
 import ai.rever.bossterm.compose.settings.SettingsManager
 import ai.rever.bossterm.compose.settings.SettingsPanel
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -236,17 +238,23 @@ class TerminalTabPluginAPIImpl(
         val settingsManager = remember { SettingsManager.instance }
         val currentSettings by settingsManager.settings.collectAsState()
 
-        SettingsPanel(
-            settings = currentSettings,
-            onSettingsChange = { newSettings ->
-                settingsManager.updateSettings(newSettings)
-            },
-            onResetToDefaults = {
-                settingsManager.resetToDefaults()
-            },
-            onRestartApp = null,
-            modifier = modifier
-        )
+        // Expose the plugin's MCP config to the settings UI so the MCP section
+        // surfaces the "bossconsole" endpoint (and not the "not wired up" banner)
+        // and honors allowWriteTools / showInSettingsUi. The toggle binds the
+        // port via SettingsManager regardless; this only drives the UX.
+        CompositionLocalProvider(LocalBossTermMcpConfig provides TerminalMcpConfigHolder.config) {
+            SettingsPanel(
+                settings = currentSettings,
+                onSettingsChange = { newSettings ->
+                    settingsManager.updateSettings(newSettings)
+                },
+                onResetToDefaults = {
+                    settingsManager.resetToDefaults()
+                },
+                onRestartApp = null,
+                modifier = modifier
+            )
+        }
     }
 
     @Composable
