@@ -9,7 +9,9 @@ plugins {
 group = "ai.rever.boss.plugin.dynamic"
 // 2.1.0 signals the new contract: plugin bundles bossterm-compose privately;
 // host no longer carries it. Independent release cadence from the host.
-version = "2.1.9"
+// 2.2.0: plugin now hosts the BossTerm MCP server ("bossconsole" endpoint),
+// bundling ktor-server-cio + the MCP Kotlin SDK.
+version = "2.2.0"
 
 java {
     toolchain {
@@ -29,7 +31,9 @@ val bossPluginApiPath = "../boss-plugin-api"
 
 // BossTerm version is now private to this plugin. Bumping bossterm only
 // requires re-releasing this plugin, not BossConsole.
-val bosstermVersion = "1.1.99"
+// 1.1.101 adds the `bossterm.settings.dir` relocation hook + the MCP
+// status-pill `displayName` label (BossTerm #268) that this plugin relies on.
+val bosstermVersion = "1.1.101"
 
 repositories {
     google()
@@ -109,7 +113,17 @@ tasks.register<Jar>("buildPluginJar") {
                 name.startsWith("purejavacomm-") ||
                 name.startsWith("jna-") ||
                 name.startsWith("icu4j-") ||
-                name.startsWith("trove4j-")
+                name.startsWith("trove4j-") ||
+                // BossTerm's in-process MCP server (ai.rever.bossterm.compose.mcp.*)
+                // runs on an embedded Ktor (CIO) server + the MCP Kotlin SDK.
+                // These are `io.ktor.*` / `io.modelcontextprotocol.*` / `kotlinx.io.*`
+                // packages — NOT in BossConsole's parent-first shared-package set,
+                // so the plugin classloader resolves them child-first and they must
+                // be bundled here. slf4j / kotlinx-serialization / kotlinx-coroutines
+                // are deliberately omitted (parent-first; provided by the host).
+                name.startsWith("ktor-") ||
+                name.startsWith("kotlin-sdk-") ||
+                name.startsWith("kotlinx-io-")
         }.map { zipTree(it) }
     })
 }

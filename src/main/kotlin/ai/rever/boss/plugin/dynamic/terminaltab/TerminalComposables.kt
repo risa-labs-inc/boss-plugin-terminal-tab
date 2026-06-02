@@ -5,6 +5,7 @@ import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
 import ai.rever.bossterm.compose.EmbeddableTerminal
 import ai.rever.bossterm.compose.TabbedTerminal
+import ai.rever.bossterm.compose.mcp.LocalBossTermMcpConfig
 import ai.rever.bossterm.compose.hyperlinks.HyperlinkInfo
 import ai.rever.bossterm.compose.hyperlinks.HyperlinkType
 import ai.rever.bossterm.compose.rememberEmbeddableTerminalState
@@ -16,6 +17,7 @@ import ai.rever.boss.plugin.api.LocalWindowIdProvider
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -109,6 +111,7 @@ internal fun TabbedTerminalContentImpl(
             }
 
             KeyboardShortcutInterceptorWrapper(windowId = windowId) {
+              CompositionLocalProvider(LocalBossTermMcpConfig provides TerminalMcpConfigHolder.config) {
                 TabbedTerminal(
                     state = state,
                     initialCommand = normalizedPendingCommand,
@@ -131,6 +134,7 @@ internal fun TabbedTerminalContentImpl(
                     onLinkClick = { info -> handleTerminalLinkClick(info, scope, SIDEBAR_TERMINAL_ID, windowId) },
                     modifier = Modifier.fillMaxSize()
                 )
+              }
             }
         }
     }
@@ -223,6 +227,7 @@ internal fun PersistentTabbedTerminalContentImpl(
             }
 
             KeyboardShortcutInterceptorWrapper(windowId = windowId) {
+              CompositionLocalProvider(LocalBossTermMcpConfig provides TerminalMcpConfigHolder.config) {
                 TabbedTerminal(
                     state = state,
                     initialCommand = normalizedInitialCommand,
@@ -244,6 +249,7 @@ internal fun PersistentTabbedTerminalContentImpl(
                     },
                     modifier = Modifier.fillMaxSize()
                 )
+              }
             }
         }
     }

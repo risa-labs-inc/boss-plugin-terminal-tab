@@ -6,6 +6,7 @@ import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
 import ai.rever.bossterm.compose.EmbeddableTerminalState
 import ai.rever.bossterm.compose.TabbedTerminalState
+import ai.rever.bossterm.compose.mcp.McpTerminalRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -31,13 +32,24 @@ object TabbedTerminalStateRegistry {
     private fun key(windowId: String, terminalId: String) = "$windowId:$terminalId"
 
     fun getOrCreate(windowId: String, terminalId: String): TabbedTerminalState {
-        return states.getOrPut(key(windowId, terminalId)) { TabbedTerminalState() }
+        // Register newly-created states with BossTerm's process-wide MCP registry
+        // (inside the factory lambda so it runs once per state, not on cache hits).
+        // This is what makes the terminal visible to the bossconsole MCP server
+        // started by TerminalTabDynamicPlugin. register() is idempotent.
+        return states.getOrPut(key(windowId, terminalId)) {
+            TabbedTerminalState().also { McpTerminalRegistry.register(it) }
+        }
     }
 
     fun get(windowId: String, terminalId: String): TabbedTerminalState? = states[key(windowId, terminalId)]
 
     fun remove(windowId: String, terminalId: String) {
-        states.remove(key(windowId, terminalId))?.dispose()
+        // Unregister from the MCP registry BEFORE dispose so MCP request threads
+        // never resolve a tab to a disposed state.
+        states.remove(key(windowId, terminalId))?.let { state ->
+            McpTerminalRegistry.unregister(state)
+            state.dispose()
+        }
     }
 
     fun contains(windowId: String, terminalId: String): Boolean = key(windowId, terminalId) in states
@@ -46,7 +58,10 @@ object TabbedTerminalStateRegistry {
         val prefix = "$windowId:"
         val keysToRemove = states.keys.filter { it.startsWith(prefix) }
         keysToRemove.forEach { key ->
-            states.remove(key)?.dispose()
+            states.remove(key)?.let { state ->
+                McpTerminalRegistry.unregister(state)
+                state.dispose()
+            }
         }
         clearSidebarConfigTrackingForWindow(windowId)
         logger.debug(LogCategory.TERMINAL, "Removed terminals for window", mapOf("count" to keysToRemove.size, "windowId" to windowId))
@@ -177,6 +192,7 @@ object TabbedTerminalStateRegistry {
         val count = states.size
         states.values.forEach { state ->
             try {
+                McpTerminalRegistry.unregister(state)
                 state.dispose()
             } catch (e: Exception) {
                 logger.warn(LogCategory.TERMINAL, "Error disposing terminal state", error = e)
