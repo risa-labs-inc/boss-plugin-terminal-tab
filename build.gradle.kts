@@ -15,7 +15,7 @@ group = "ai.rever.boss.plugin.dynamic"
 // sidebar/Runner and boss:// deep-link verbs via BossTermMcpConfig.additionalTools.
 // 2.3.4: bundles BossTerm 1.2.102 (command blocks, command palette, workflows,
 // history search, session restore, left tab bar).
-version = "2.3.4"
+version = "2.3.5"
 
 java {
     toolchain {
