@@ -13,7 +13,9 @@ group = "ai.rever.boss.plugin.dynamic"
 // bundling ktor-server-cio + the MCP Kotlin SDK.
 // 2.3.0: adds host-facing MCP tools (run_in_sidebar, cli) that drive the
 // sidebar/Runner and boss:// deep-link verbs via BossTermMcpConfig.additionalTools.
-version = "2.3.3"
+// 2.3.4: bundles BossTerm 1.2.102 (command blocks, command palette, workflows,
+// history search, session restore, left tab bar).
+version = "2.3.4"
 
 java {
     toolchain {
@@ -33,9 +35,13 @@ val bossPluginApiPath = "../boss-plugin-api"
 
 // BossTerm version is now private to this plugin. Bumping bossterm only
 // requires re-releasing this plugin, not BossConsole.
-// 1.1.101 adds the `bossterm.settings.dir` relocation hook + the MCP
-// status-pill `displayName` label (BossTerm #268) that this plugin relies on.
-val bosstermVersion = "1.1.101"
+// 1.2.102 is a major feature release (command blocks, command palette,
+// workflows, Ctrl+R history search, session restore, customizable left tab
+// bar) with no breaking changes; compose-ui now compiles with -Xjvm-default=all
+// (no $DefaultImpls bridges). 1.1.101 added the `bossterm.settings.dir`
+// relocation hook + the MCP status-pill `displayName` label (BossTerm #268)
+// this plugin relies on.
+val bosstermVersion = "1.2.102"
 
 repositories {
     google()
