@@ -40,6 +40,9 @@ val bossPluginApiPath = "../boss-plugin-api"
 
 // BossTerm version is now private to this plugin. Bumping bossterm only
 // requires re-releasing this plugin, not BossConsole.
+// 1.2.106 adds remote-session connection (mirror a remote BossTerm's tabs as
+// local tabs); 1.2.105 adds live remote-mode switching, verified Cloudflare
+// links, and viewer parity (resize/splits/focus/tabs).
 // 1.2.104 adds session sharing (1.2.103 launch + 1.2.104 polish): a Ktor-hosted
 // web viewer (xterm.js) with device-approval handshake, QR share dialog (new
 // transitive dep com.google.zxing:core — bundled below), and optional remote
@@ -48,7 +51,7 @@ val bossPluginApiPath = "../boss-plugin-api"
 // command palette, workflows, history search, session restore; compose-ui
 // compiles with -Xjvm-default=all (no $DefaultImpls bridges). 1.1.101 added
 // the `bossterm.settings.dir` relocation hook this plugin relies on.
-val bosstermVersion = "1.2.104"
+val bosstermVersion = "1.2.106"
 
 repositories {
     google()
