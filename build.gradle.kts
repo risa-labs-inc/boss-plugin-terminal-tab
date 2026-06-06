@@ -20,7 +20,7 @@ group = "ai.rever.boss.plugin.dynamic"
 // sharing lifecycle (SessionShareManager start/shutdown, onTabClosed) and
 // surfaces approval requests as host toasts. Sharing defaults for the
 // BossConsole profile: port 7700 (MCP owns 7677), remote mode "off".
-version = "2.3.6"
+version = "2.3.7"
 
 java {
     toolchain {
