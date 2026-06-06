@@ -11,6 +11,7 @@ import ai.rever.bossterm.compose.hyperlinks.HyperlinkType
 import ai.rever.bossterm.compose.rememberEmbeddableTerminalState
 import ai.rever.bossterm.compose.settings.SettingsManager
 import ai.rever.bossterm.compose.settings.TerminalSettingsOverride
+import ai.rever.bossterm.compose.share.SessionShareManager
 import ai.rever.bossterm.compose.onboarding.OnboardingWizard
 import ai.rever.boss.plugin.api.LocalIsPanelActive
 import ai.rever.boss.plugin.api.LocalWindowIdProvider
@@ -123,6 +124,9 @@ internal fun TabbedTerminalContentImpl(
                         onExit()
                     },
                     onTabClose = { tabId ->
+                        // Stop any TAB-scoped session share for this tab (the share
+                        // manager only learns about closes from the embedder).
+                        SessionShareManager.onTabClosed(tabId)
                         val configId = TabbedTerminalStateRegistry.getConfigIdForSidebarTab(windowId, tabId)
                         if (configId != null) {
                             onRunnerConfigRemoved?.invoke(windowId, configId)
@@ -255,6 +259,9 @@ internal fun PersistentTabbedTerminalContentImpl(
                         TabbedTerminalStateRegistry.remove(windowId, terminalId)
                         onExit()
                     },
+                    // Stop any TAB-scoped session share for a closed tab (the share
+                    // manager only learns about closes from the embedder).
+                    onTabClose = { tabId -> SessionShareManager.onTabClosed(tabId) },
                     onShowSettings = onShowSettings,
                     onShowWelcomeWizard = { showWelcomeWizard = true },
                     onWindowTitleChange = { title -> onTitleChange?.invoke(title) },
