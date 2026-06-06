@@ -15,7 +15,12 @@ group = "ai.rever.boss.plugin.dynamic"
 // sidebar/Runner and boss:// deep-link verbs via BossTermMcpConfig.additionalTools.
 // 2.3.4: bundles BossTerm 1.2.102 (command blocks, command palette, workflows,
 // history search, session restore, left tab bar).
-version = "2.3.5"
+// 2.3.6: bundles BossTerm 1.2.104 (session sharing: self-hosted web viewer with
+// device approval); adds zxing (QR in share dialog) to the bundle; wires the
+// sharing lifecycle (SessionShareManager start/shutdown, onTabClosed) and
+// surfaces approval requests as host toasts. Sharing defaults for the
+// BossConsole profile: port 7700 (MCP owns 7677), remote mode "off".
+version = "2.3.6"
 
 java {
     toolchain {
@@ -35,13 +40,15 @@ val bossPluginApiPath = "../boss-plugin-api"
 
 // BossTerm version is now private to this plugin. Bumping bossterm only
 // requires re-releasing this plugin, not BossConsole.
-// 1.2.102 is a major feature release (command blocks, command palette,
-// workflows, Ctrl+R history search, session restore, customizable left tab
-// bar) with no breaking changes; compose-ui now compiles with -Xjvm-default=all
-// (no $DefaultImpls bridges). 1.1.101 added the `bossterm.settings.dir`
-// relocation hook + the MCP status-pill `displayName` label (BossTerm #268)
-// this plugin relies on.
-val bosstermVersion = "1.2.102"
+// 1.2.104 adds session sharing (1.2.103 launch + 1.2.104 polish): a Ktor-hosted
+// web viewer (xterm.js) with device-approval handshake, QR share dialog (new
+// transitive dep com.google.zxing:core — bundled below), and optional remote
+// exposure (Tailscale/Cloudflare). New ktor-client/server-websockets deps are
+// covered by the existing `ktor-` bundle prefix. 1.2.102 added command blocks,
+// command palette, workflows, history search, session restore; compose-ui
+// compiles with -Xjvm-default=all (no $DefaultImpls bridges). 1.1.101 added
+// the `bossterm.settings.dir` relocation hook this plugin relies on.
+val bosstermVersion = "1.2.104"
 
 repositories {
     google()
@@ -152,7 +159,15 @@ tasks.register<Jar>("buildPluginJar") {
                 name.startsWith("kotlinx-collections-immutable") ||
                 name.startsWith("kotlinx-datetime") ||
                 name.startsWith("atomicfu") ||
-                name.startsWith("config-")
+                name.startsWith("config-") ||
+                // QR-code rendering in BossTerm 1.2.104's share dialog uses
+                // com.google.zxing:core, whose JAR is named `core-<ver>.jar` —
+                // a bare `core-` name prefix would collide with core-common-/
+                // core-proto- style artifacts, so match the gradle-cache PATH
+                // segment instead (version- and filename-independent; also
+                // catches the transitive zxing:javase if it ever appears).
+                // zxing is not host-shared, so it must be bundled child-first.
+                jar.path.replace('\\', '/').contains("/com.google.zxing/")
         }.map { zipTree(it) }
     })
 }
