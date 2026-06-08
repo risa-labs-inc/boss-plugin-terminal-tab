@@ -22,7 +22,7 @@ group = "ai.rever.boss.plugin.dynamic"
 // BossConsole profile: port 7700 (MCP owns 7677), remote mode "off".
 // 2.3.8: bundles BossTerm 1.2.108 (E2E encryption for session sharing,
 // Share-All-Windows scope, phone-grade web viewer UX).
-version = "2.3.8"
+version = "2.3.9"
 
 java {
     toolchain {
