@@ -1,0 +1,82 @@
+name: BossTerm Auto-Bump
+
+# Polls Maven Central for a newer com.risaboss:bossterm-compose release and, when
+# one is live, opens (and by default merges) a PR bumping the bundled version in
+# build.gradle.kts. Merging triggers build.yml's `push: main` release, which ships
+# the plugin. See .github/scripts/bump-bossterm.sh for the bump logic.
+#
+# Requires repo secret AUTOBUMP_PAT — a fine-grained PAT (or GitHub App token)
+# scoped to this repo with Contents: Read/Write + Pull requests: Read/Write. A PAT
+# (not the default GITHUB_TOKEN) is mandatory: a merge pushed by GITHUB_TOKEN does
+# NOT trigger build.yml (GitHub's recursion guard), so nothing would ship.
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'   # weekly — Mondays 09:00 UTC
+  # Run on demand from the Actions tab ("Run workflow"), or: gh workflow run "BossTerm Auto-Bump"
+  workflow_dispatch:
+    inputs:
+      target_version:
+        description: 'Force a specific bossterm version (testing/manual)'
+        required: false
+      dry_run:
+        description: 'Open the PR but do not merge it'
+        type: boolean
+        default: false
+
+concurrency:
+  group: bossterm-autobump
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  autobump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # PAT so the eventual merge push triggers the release workflow.
+          token: ${{ secrets.AUTOBUMP_PAT }}
+
+      - name: Resolve & prepare bump
+        id: bump
+        env:
+          TARGET_VERSION: ${{ inputs.target_version }}
+        run: bash .github/scripts/bump-bossterm.sh
+
+      - name: Open & merge PR
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.AUTOBUMP_PAT }}
+          NEW_BT: ${{ steps.bump.outputs.new_bt }}
+          NEW_PLUGIN: ${{ steps.bump.outputs.new_plugin }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          BR="bump/bossterm-${NEW_BT}"
+
+          # Idempotency: skip if a PR for this exact bump already exists.
+          if [ -n "$(gh pr list --head "$BR" --state all --json number -q '.[0].number')" ]; then
+            echo "PR for $BR already exists — skipping."
+            exit 0
+          fi
+
+          git config user.name  "bossterm-autobump[bot]"
+          git config user.email "bossterm-autobump@users.noreply.github.com"
+          git switch -c "$BR"
+          git commit -am "⬆️ Bundle BossTerm ${NEW_BT} (${NEW_PLUGIN})"
+          git push -u origin "$BR"
+
+          gh pr create --base main --head "$BR" \
+            --title "⬆️ Bundle BossTerm ${NEW_BT} (${NEW_PLUGIN})" \
+            --body-file pr-body.md
+
+          if [ "${DRY_RUN:-false}" = "true" ]; then
+            echo "dry_run=true — PR opened, leaving it unmerged."
+          else
+            gh pr merge "$BR" --squash --delete-branch
+          fi
