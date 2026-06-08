@@ -24,7 +24,10 @@ group = "ai.rever.boss.plugin.dynamic"
 // Share-All-Windows scope, phone-grade web viewer UX).
 // 2.3.10: bundles BossTerm 1.2.109 (web viewer: clickable links + touch text
 // selection, Enter key + iOS soft-keyboard fixes for the on-screen key strip).
-version = "2.3.11"
+// 2.3.12: bundles BossTerm 1.2.111 (session sharing: one-click cloudflared
+// install on Linux + "Fit host to my screen" embedder hook; CLI script now
+// bundled under common/ so packaged apps can install the bossterm CLI).
+version = "2.3.12"
 
 java {
     toolchain {
@@ -44,6 +47,10 @@ val bossPluginApiPath = "../boss-plugin-api"
 
 // BossTerm version is now private to this plugin. Bumping bossterm only
 // requires re-releasing this plugin, not BossConsole.
+// 1.2.111 bundles the bossterm CLI script under common/ so packaged apps can
+// install the CLI (#287). 1.2.110 adds one-click cloudflared install on Linux
+// and a "Fit host to my screen" embedder hook for session sharing — both
+// session-sharing UX, no new Kotlin deps.
 // 1.2.109 is web-viewer-only: clickable links + touch text selection, and
 // Enter-key / iOS soft-keyboard fixes for the on-screen key strip (no new
 // Kotlin deps — viewer.js/index.html ship inside the bundled compose-ui jar).
@@ -61,7 +68,7 @@ val bossPluginApiPath = "../boss-plugin-api"
 // command palette, workflows, history search, session restore; compose-ui
 // compiles with -Xjvm-default=all (no $DefaultImpls bridges). 1.1.101 added
 // the `bossterm.settings.dir` relocation hook this plugin relies on.
-val bosstermVersion = "1.2.109"
+val bosstermVersion = "1.2.111"
 
 repositories {
     google()
