@@ -29,7 +29,7 @@ group = "ai.rever.boss.plugin.dynamic"
 // bundled under common/ so packaged apps can install the bossterm CLI).
 // 2.3.15: auto-bumped bundled BossTerm to 1.2.112
 // (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.112.md).
-version = "2.3.15"
+version = "2.3.16"
 
 java {
     toolchain {
