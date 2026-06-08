@@ -20,7 +20,9 @@ group = "ai.rever.boss.plugin.dynamic"
 // sharing lifecycle (SessionShareManager start/shutdown, onTabClosed) and
 // surfaces approval requests as host toasts. Sharing defaults for the
 // BossConsole profile: port 7700 (MCP owns 7677), remote mode "off".
-version = "2.3.7"
+// 2.3.8: bundles BossTerm 1.2.108 (E2E encryption for session sharing,
+// Share-All-Windows scope, phone-grade web viewer UX).
+version = "2.3.8"
 
 java {
     toolchain {
@@ -40,6 +42,9 @@ val bossPluginApiPath = "../boss-plugin-api"
 
 // BossTerm version is now private to this plugin. Bumping bossterm only
 // requires re-releasing this plugin, not BossConsole.
+// 1.2.108 adds end-to-end encryption for session sharing; 1.2.107 adds a
+// "Share All Windows" scope, phone-grade web-viewer UX, and window-fit
+// reconciliation.
 // 1.2.106 adds remote-session connection (mirror a remote BossTerm's tabs as
 // local tabs); 1.2.105 adds live remote-mode switching, verified Cloudflare
 // links, and viewer parity (resize/splits/focus/tabs).
@@ -51,7 +56,7 @@ val bossPluginApiPath = "../boss-plugin-api"
 // command palette, workflows, history search, session restore; compose-ui
 // compiles with -Xjvm-default=all (no $DefaultImpls bridges). 1.1.101 added
 // the `bossterm.settings.dir` relocation hook this plugin relies on.
-val bosstermVersion = "1.2.106"
+val bosstermVersion = "1.2.108"
 
 repositories {
     google()
