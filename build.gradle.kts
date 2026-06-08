@@ -24,7 +24,7 @@ group = "ai.rever.boss.plugin.dynamic"
 // Share-All-Windows scope, phone-grade web viewer UX).
 // 2.3.10: bundles BossTerm 1.2.109 (web viewer: clickable links + touch text
 // selection, Enter key + iOS soft-keyboard fixes for the on-screen key strip).
-version = "2.3.10"
+version = "2.3.11"
 
 java {
     toolchain {
