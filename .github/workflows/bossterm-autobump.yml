@@ -11,7 +11,7 @@ name: BossTerm Auto-Bump
 
 on:
   schedule:
-    - cron: '0 9 * * 1'   # weekly — Mondays 09:00 UTC
+    - cron: '*/30 * * * *'   # every 30 minutes
   # Run on demand from the Actions tab ("Run workflow"), or: gh workflow run "BossTerm Auto-Bump"
   workflow_dispatch:
     inputs:
