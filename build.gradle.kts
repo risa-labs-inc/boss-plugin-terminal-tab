@@ -27,7 +27,7 @@ group = "ai.rever.boss.plugin.dynamic"
 // 2.3.12: bundles BossTerm 1.2.111 (session sharing: one-click cloudflared
 // install on Linux + "Fit host to my screen" embedder hook; CLI script now
 // bundled under common/ so packaged apps can install the bossterm CLI).
-version = "2.3.13"
+version = "2.3.14"
 
 java {
     toolchain {
