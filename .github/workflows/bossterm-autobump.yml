@@ -1,14 +1,13 @@
 name: BossTerm Auto-Bump
 
 # Polls Maven Central for a newer com.risaboss:bossterm-compose release and, when
-# one is live, opens (and by default merges) a PR bumping the bundled version in
-# build.gradle.kts. Merging triggers build.yml's `push: main` release, which ships
-# the plugin. See .github/scripts/bump-bossterm.sh for the bump logic.
+# one is live, opens and merges a PR bumping the bundled version in build.gradle.kts,
+# then ships the plugin. See .github/scripts/bump-bossterm.sh for the bump logic.
 #
-# Requires repo secret AUTOBUMP_PAT — a fine-grained PAT (or GitHub App token)
-# scoped to this repo with Contents: Read/Write + Pull requests: Read/Write. A PAT
-# (not the default GITHUB_TOKEN) is mandatory: a merge pushed by GITHUB_TOKEN does
-# NOT trigger build.yml (GitHub's recursion guard), so nothing would ship.
+# No PAT needed — uses the built-in GITHUB_TOKEN. A merge pushed by GITHUB_TOKEN
+# does NOT trigger build.yml's `push: main` (GitHub's recursion guard), BUT
+# workflow_dispatch is exempt from that guard, so after merging we explicitly
+# dispatch the release with `gh workflow run build.yml`. Requires `actions: write`.
 
 on:
   schedule:
@@ -29,8 +28,9 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: write        # push the bump branch + merge to main
+  pull-requests: write   # open and merge the PR
+  actions: write         # dispatch build.yml (the release) via gh workflow run
 
 jobs:
   autobump:
@@ -38,9 +38,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          # PAT so the eventual merge push triggers the release workflow.
-          token: ${{ secrets.AUTOBUMP_PAT }}
 
       - name: Resolve & prepare bump
         id: bump
@@ -48,10 +45,10 @@ jobs:
           TARGET_VERSION: ${{ inputs.target_version }}
         run: bash .github/scripts/bump-bossterm.sh
 
-      - name: Open & merge PR
+      - name: Open, merge & release
         if: steps.bump.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ secrets.AUTOBUMP_PAT }}
+          GH_TOKEN: ${{ github.token }}
           NEW_BT: ${{ steps.bump.outputs.new_bt }}
           NEW_PLUGIN: ${{ steps.bump.outputs.new_plugin }}
           DRY_RUN: ${{ inputs.dry_run }}
@@ -65,8 +62,8 @@ jobs:
             exit 0
           fi
 
-          git config user.name  "bossterm-autobump[bot]"
-          git config user.email "bossterm-autobump@users.noreply.github.com"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$BR"
           git commit -am "⬆️ Bundle BossTerm ${NEW_BT} (${NEW_PLUGIN})"
           git push -u origin "$BR"
@@ -77,6 +74,12 @@ jobs:
 
           if [ "${DRY_RUN:-false}" = "true" ]; then
             echo "dry_run=true — PR opened, leaving it unmerged."
-          else
-            gh pr merge "$BR" --squash --delete-branch
+            exit 0
           fi
+
+          gh pr merge "$BR" --squash --delete-branch
+
+          # The merge above was pushed by GITHUB_TOKEN, which does NOT trigger
+          # build.yml's `push: main`. workflow_dispatch is exempt from the guard,
+          # so dispatch the release explicitly (build.yml has workflow_dispatch).
+          gh workflow run build.yml --ref main
