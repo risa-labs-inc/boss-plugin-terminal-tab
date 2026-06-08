@@ -22,7 +22,9 @@ group = "ai.rever.boss.plugin.dynamic"
 // BossConsole profile: port 7700 (MCP owns 7677), remote mode "off".
 // 2.3.8: bundles BossTerm 1.2.108 (E2E encryption for session sharing,
 // Share-All-Windows scope, phone-grade web viewer UX).
-version = "2.3.9"
+// 2.3.10: bundles BossTerm 1.2.109 (web viewer: clickable links + touch text
+// selection, Enter key + iOS soft-keyboard fixes for the on-screen key strip).
+version = "2.3.10"
 
 java {
     toolchain {
@@ -42,6 +44,9 @@ val bossPluginApiPath = "../boss-plugin-api"
 
 // BossTerm version is now private to this plugin. Bumping bossterm only
 // requires re-releasing this plugin, not BossConsole.
+// 1.2.109 is web-viewer-only: clickable links + touch text selection, and
+// Enter-key / iOS soft-keyboard fixes for the on-screen key strip (no new
+// Kotlin deps — viewer.js/index.html ship inside the bundled compose-ui jar).
 // 1.2.108 adds end-to-end encryption for session sharing; 1.2.107 adds a
 // "Share All Windows" scope, phone-grade web-viewer UX, and window-fit
 // reconciliation.
@@ -56,7 +61,7 @@ val bossPluginApiPath = "../boss-plugin-api"
 // command palette, workflows, history search, session restore; compose-ui
 // compiles with -Xjvm-default=all (no $DefaultImpls bridges). 1.1.101 added
 // the `bossterm.settings.dir` relocation hook this plugin relies on.
-val bosstermVersion = "1.2.108"
+val bosstermVersion = "1.2.109"
 
 repositories {
     google()
