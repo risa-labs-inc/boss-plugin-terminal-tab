@@ -62,6 +62,9 @@ class TerminalTabComponent(
 
     @Composable
     override fun Content() {
+        // Keep the terminal's colors in sync with the active BOSS host theme.
+        ApplyHostThemeToTerminal()
+
         // Get the terminal API from the plugin system (self-referencing since we register it)
         val terminalApi = context.getPluginAPI(TerminalTabPluginAPI::class.java)
         val tabUpdateProviderFactory = context.tabUpdateProviderFactory
