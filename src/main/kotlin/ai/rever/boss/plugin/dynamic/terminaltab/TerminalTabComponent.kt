@@ -6,6 +6,8 @@ import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.api.TabTypeInfo
 import ai.rever.boss.plugin.api.TerminalTabInfoInterface
 import ai.rever.boss.plugin.api.TerminalTabPluginAPI
+import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.plugin.ui.BossThemeColors
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -18,7 +20,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.arkivanov.decompose.ComponentContext
 import com.arkivanov.essenty.lifecycle.Lifecycle
@@ -61,19 +62,24 @@ class TerminalTabComponent(
 
     @Composable
     override fun Content() {
+        // Keep the terminal's colors in sync with the active BOSS host theme.
+        ApplyHostThemeToTerminal()
+
         // Get the terminal API from the plugin system (self-referencing since we register it)
         val terminalApi = context.getPluginAPI(TerminalTabPluginAPI::class.java)
         val tabUpdateProviderFactory = context.tabUpdateProviderFactory
 
         if (terminalApi == null) {
-            Box(
-                modifier = Modifier.fillMaxSize().padding(16.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "Terminal provider not available",
-                    color = Color(0xFFFF6B6B)
-                )
+            BossTheme {
+                Box(
+                    modifier = Modifier.fillMaxSize().padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Terminal provider not available",
+                        color = BossThemeColors.ErrorColor
+                    )
+                }
             }
             return
         }
