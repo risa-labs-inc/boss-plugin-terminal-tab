@@ -4,7 +4,7 @@
   "displayName": "Terminal Tab",
   "version": "2.1.0",
   "apiVersion": "1.0.20",
-  "minBossVersion": "9.2.0",
+  "minBossVersion": "9.2.20",
   "mainClass": "ai.rever.boss.plugin.dynamic.terminaltab.TerminalTabDynamicPlugin",
   "type": "tab",
   "systemPlugin": true,
