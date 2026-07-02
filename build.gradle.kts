@@ -45,7 +45,14 @@ group = "ai.rever.boss.plugin.dynamic"
 // (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.119.md).
 // 2.3.32: auto-bumped bundled BossTerm to 1.2.120
 // (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.120.md).
-version = "2.3.33"
+// 2.5.0: bridges plugin-contributed MCP tools onto the `boss` server — reads the
+// host McpToolRegistry (boss-plugin-api 1.0.51) and mirrors each active plugin's
+// tools onto the live MCP server via addTool/removeTool (see McpDynamicTools.kt),
+// so `mcp__boss__*` gains/loses tools as plugins are enabled/disabled — and
+// exposes McpServerController via registerPluginAPI (MCP server on/off +
+// one-click CLI attach for the Plugin Manager's MCP tab; see
+// McpServerControl.kt). No bundled-BossTerm change (still 1.2.120).
+version = "2.5.0"
 
 java {
     toolchain {
@@ -114,7 +121,7 @@ repositories {
 dependencies {
     if (useLocalDependencies) {
         // Local development: use boss-plugin-api JAR from sibling repo
-        compileOnly(files("$bossPluginApiPath/build/libs/boss-plugin-api-1.0.47.jar"))
+        compileOnly(files("$bossPluginApiPath/build/libs/boss-plugin-api-1.0.51.jar"))
     } else {
         // CI: use downloaded JAR
         compileOnly(files("build/downloaded-deps/boss-plugin-api.jar"))
