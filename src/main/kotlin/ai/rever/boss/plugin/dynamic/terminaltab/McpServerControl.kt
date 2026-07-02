@@ -12,6 +12,8 @@ import ai.rever.bossterm.compose.mcp.McpCliAttacher
 import ai.rever.bossterm.compose.mcp.McpTerminalRegistry
 import ai.rever.bossterm.compose.settings.SettingsManager
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -30,9 +32,21 @@ private val serverControlLogger = BossLogger.forComponent("TerminalTabMcpServerC
  * management UIs (Plugin Manager's MCP tab) resolve it with
  * `getPluginAPI(McpServerController::class.java)`.
  */
-internal class McpServerControllerImpl(scope: CoroutineScope) : McpServerController {
+internal class McpServerControllerImpl(parentScope: CoroutineScope) : McpServerController {
+
+    // Own child scope so the two Eagerly-shared stateIn collectors below die
+    // with [close] on plugin dispose. Collecting on the parent (mcpScope, which
+    // deliberately outlives dispose for the async engine shutdown) would pin
+    // this instance — and the whole plugin classloader — across every plugin
+    // disable/update cycle.
+    private val scope = CoroutineScope(parentScope.coroutineContext + Job(parentScope.coroutineContext[Job]))
 
     private val settings = SettingsManager.instance
+
+    /** Cancel the state collectors; called from the plugin's dispose(). */
+    fun close() {
+        scope.cancel()
+    }
 
     override val state: StateFlow<McpServerState> =
         combine(settings.settings, McpTerminalRegistry.runningPort) { s, runningPort ->

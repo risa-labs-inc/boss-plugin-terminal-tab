@@ -62,6 +62,11 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
     private val mcpScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var mcpManager: BossTermMcpManager? = null
 
+    // MCP server control surface (Plugin Manager MCP tab). Held so dispose()
+    // can cancel its state collectors — mcpScope itself deliberately outlives
+    // dispose for the async engine shutdown.
+    private var mcpServerController: McpServerControllerImpl? = null
+
     // Host toasts for session-sharing approval requests: requestId → toastId,
     // so resolved/expired requests dismiss their toast.
     private val approvalToastIds = ConcurrentHashMap<String, String>()
@@ -102,7 +107,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         // like the Plugin Manager's MCP tab. Guarded: a failure here must never
         // prevent terminal tabs from working.
         try {
-            context.registerPluginAPI(McpServerControllerImpl(mcpScope))
+            mcpServerController = McpServerControllerImpl(mcpScope).also { context.registerPluginAPI(it) }
         } catch (t: Throwable) {
             mcpLogger.warn(LogCategory.TERMINAL, "Failed to register McpServerController", error = t)
         }
@@ -219,6 +224,8 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
             // it is active and vanish when it is disabled/unloaded. See
             // McpDynamicTools.kt / McpToolRegistryImpl in the host.
             val toolRegistry = pluginContext?.mcpToolRegistry
+            // Re-arm the bridge in case this is a re-registration after dispose().
+            resumeDynamicPluginTools()
             val config = BossTermMcpConfig(
                 serverName = "boss",
                 displayName = "Boss",
@@ -351,8 +358,13 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
             mcpLogger.warn(LogCategory.TERMINAL, "Error stopping BossTerm MCP manager", error = t)
         }
         // Cancel the plugin-tool sync collector (a child job of mcpScope, which we
-        // otherwise leave running for the in-flight engine shutdown above).
+        // otherwise leave running for the in-flight engine shutdown above) and
+        // refuse late bridge installs from an in-flight engine start.
         stopDynamicPluginTools()
+        // Cancel the server-controller state collectors so they can't pin this
+        // plugin's classloader across disable/update cycles.
+        mcpServerController?.close()
+        mcpServerController = null
         mcpManager = null
         TerminalMcpConfigHolder.config = null
 

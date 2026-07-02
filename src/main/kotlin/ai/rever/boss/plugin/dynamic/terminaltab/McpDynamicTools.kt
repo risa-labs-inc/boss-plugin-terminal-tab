@@ -46,6 +46,17 @@ private val RESERVED_TOOL_NAMES: Set<String> = setOf(
 private var currentSyncJob: Job? = null
 
 /**
+ * Set by [stopDynamicPluginTools] on plugin dispose, cleared by
+ * [resumeDynamicPluginTools] on (re-)registration. Guards the dispose-vs-
+ * reconcile race: an in-flight engine start (startEngineLocked is not
+ * cancellation-aware) can invoke additionalTools AFTER dispose has torn the
+ * bridge down — without this flag that would launch a collector on mcpScope
+ * (which outlives dispose), pinning the disposed plugin's classloader forever.
+ */
+@Volatile
+private var bridgeDisposed = false
+
+/**
  * Bridge the host [McpToolRegistry] (tools contributed by other active plugins)
  * onto the live MCP [server]. A [kotlinx.coroutines.flow.StateFlow] collector
  * does an initial sync (StateFlow replays its current value) and re-syncs on
@@ -60,6 +71,10 @@ internal fun installDynamicPluginTools(
     registry: McpToolRegistry,
     scope: CoroutineScope,
 ) {
+    if (bridgeDisposed) {
+        dynLogger.warn(LogCategory.TERMINAL, "Bridge install skipped: plugin already disposed")
+        return
+    }
     currentSyncJob?.cancel()
     val mutex = Mutex()
     val present = mutableSetOf<String>() // plugin tool names currently on this server
@@ -71,8 +86,14 @@ internal fun installDynamicPluginTools(
     dynLogger.info(LogCategory.TERMINAL, "Dynamic plugin MCP tool bridge installed")
 }
 
-/** Cancel the active sync collector (called from the plugin's dispose()). */
+/** Re-arm the bridge; called at plugin (re-)registration before the MCP manager starts. */
+internal fun resumeDynamicPluginTools() {
+    bridgeDisposed = false
+}
+
+/** Cancel the active sync collector and refuse late installs (plugin dispose()). */
 internal fun stopDynamicPluginTools() {
+    bridgeDisposed = true
     currentSyncJob?.cancel()
     currentSyncJob = null
 }
