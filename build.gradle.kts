@@ -52,7 +52,7 @@ group = "ai.rever.boss.plugin.dynamic"
 // exposes McpServerController via registerPluginAPI (MCP server on/off +
 // one-click CLI attach for the Plugin Manager's MCP tab; see
 // McpServerControl.kt). No bundled-BossTerm change (still 1.2.120).
-version = "2.5.0"
+version = "2.5.1"
 
 java {
     toolchain {
