@@ -98,6 +98,15 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         terminalApi = TerminalTabPluginAPIImpl(context)
         context.registerPluginAPI(terminalApi!!)
 
+        // MCP server control surface (on/off + CLI attach) for management UIs
+        // like the Plugin Manager's MCP tab. Guarded: a failure here must never
+        // prevent terminal tabs from working.
+        try {
+            context.registerPluginAPI(McpServerControllerImpl(mcpScope))
+        } catch (t: Throwable) {
+            mcpLogger.warn(LogCategory.TERMINAL, "Failed to register McpServerController", error = t)
+        }
+
         // Register as a main panel TAB TYPE (not a sidebar panel!)
         context.tabRegistry.registerTabType(TerminalTabType) { tabInfo, ctx ->
             TerminalTabComponent(ctx, tabInfo, context)
@@ -205,6 +214,11 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
      */
     private fun startMcpServer() {
         try {
+            // Host registry of MCP tools contributed by other active plugins.
+            // Bridged onto the live MCP server so each plugin's tools appear while
+            // it is active and vanish when it is disabled/unloaded. See
+            // McpDynamicTools.kt / McpToolRegistryImpl in the host.
+            val toolRegistry = pluginContext?.mcpToolRegistry
             val config = BossTermMcpConfig(
                 serverName = "boss",
                 displayName = "Boss",
@@ -213,8 +227,19 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
                 defaultPort = 7677,
                 // Host-facing tools (run_in_sidebar, cli) that drive BossConsole's
                 // sidebar/Runner and boss:// deep-link verbs over the same MCP
-                // endpoint as the built-in terminal tools. See McpHostTools.kt.
-                additionalTools = bossHostMcpTools
+                // endpoint as the built-in terminal tools (see McpHostTools.kt),
+                // plus the dynamic bridge for plugin-contributed tools.
+                additionalTools = { server ->
+                    bossHostMcpTools(server)
+                    if (toolRegistry != null) {
+                        installDynamicPluginTools(server, toolRegistry, mcpScope)
+                    } else {
+                        mcpLogger.warn(
+                            LogCategory.TERMINAL,
+                            "mcpToolRegistry unavailable; plugin-contributed MCP tools disabled"
+                        )
+                    }
+                }
             )
             TerminalMcpConfigHolder.config = config
             mcpManager = BossTermMcpManager(
@@ -325,6 +350,9 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         } catch (t: Throwable) {
             mcpLogger.warn(LogCategory.TERMINAL, "Error stopping BossTerm MCP manager", error = t)
         }
+        // Cancel the plugin-tool sync collector (a child job of mcpScope, which we
+        // otherwise leave running for the in-flight engine shutdown above).
+        stopDynamicPluginTools()
         mcpManager = null
         TerminalMcpConfigHolder.config = null
 
