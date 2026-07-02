@@ -54,7 +54,7 @@ group = "ai.rever.boss.plugin.dynamic"
 // McpServerControl.kt). No bundled-BossTerm change (still 1.2.120).
 // 2.5.2: auto-bumped bundled BossTerm to 1.2.124
 // (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.124.md).
-version = "2.5.2"
+version = "2.5.3"
 
 java {
     toolchain {
