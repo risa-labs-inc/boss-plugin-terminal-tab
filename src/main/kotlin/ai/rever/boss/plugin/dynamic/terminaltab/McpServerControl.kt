@@ -82,6 +82,23 @@ internal class McpServerControllerImpl(parentScope: CoroutineScope) : McpServerC
         settings.updateSetting { copy(mcpEnabled = enabled) }
     }
 
+    override fun setPort(port: Int) {
+        // Same lower bound the server's own bind path enforces (privileged
+        // ports hard-fail there); rejecting here keeps the persisted setting
+        // from ever holding a value the server can't use.
+        if (port !in 1024..65535) {
+            serverControlLogger.warn(
+                LogCategory.TERMINAL,
+                "Rejected MCP port change to $port (valid range 1024-65535)"
+            )
+            return
+        }
+        // The MCP manager watches this setting and reconciles live: stop,
+        // rebind on the new port (or a fallback), then auto-reattach rewrites
+        // the registered CLI endpoints. UIs observe [state] for the result.
+        settings.updateSetting { copy(mcpPort = port) }
+    }
+
     override suspend fun attach(targetKey: String): McpAttachOutcome {
         val target = McpAttachTarget.fromPersistenceKey(targetKey)
             ?: return McpAttachOutcome(false, "Unknown attach target: $targetKey")
