@@ -153,9 +153,11 @@ private fun registerCliTool(server: Server) {
                 "ONE action: open_panel (+panel_id) to open any sidebar plugin/panel; open_terminal " +
                 "(+command) to open the MAIN terminal (for the sidebar Runner use run_in_sidebar); " +
                 "open_folder (+path) to open a folder in the codebase; open_url (+url) to open a " +
-                "URL in the browser; or a raw `uri` starting with boss://. Known panel ids: " +
-                "terminal, console, codebase, bookmarks, downloads, run-configurations, git-status, " +
-                "git-log, performance, topofmind, plugin-manager, secret-manager.",
+                "URL in the browser; split_window (+orientation: vertical|horizontal, default " +
+                "vertical) to split BossConsole's main window; or a raw `uri` starting with boss://. " +
+                "Known panel ids: terminal, console, codebase, bookmarks, downloads, " +
+                "run-configurations, git-status, git-log, performance, topofmind, plugin-manager, " +
+                "secret-manager.",
         inputSchema = ToolSchema(
             properties = buildJsonObject {
                 putJsonObject("open_panel") {
@@ -190,6 +192,14 @@ private fun registerCliTool(server: Server) {
                     put("type", "string")
                     put("description", "URL to open for open_url.")
                 }
+                putJsonObject("split_window") {
+                    put("type", "boolean")
+                    put("description", "Split BossConsole's main window (use with optional orientation).")
+                }
+                putJsonObject("orientation") {
+                    put("type", "string")
+                    put("description", "Split orientation for split_window: \"vertical\" (default) or \"horizontal\".")
+                }
                 putJsonObject("uri") {
                     put("type", "string")
                     put("description", "Raw boss:// deep link (escape hatch); must start with boss://.")
@@ -201,7 +211,8 @@ private fun registerCliTool(server: Server) {
         val uri = resolveCliUri(request.arguments)
             ?: return@addTool errorResult(
                 "Provide one action: open_panel+panel_id, open_terminal(+command), " +
-                        "open_folder+path, open_url+url, or a raw boss:// uri."
+                        "open_folder+path, open_url+url, split_window(+orientation), or a raw " +
+                        "boss:// uri."
             )
         if (!uri.startsWith("boss://")) {
             return@addTool errorResult("Resolved uri must start with boss:// (got: $uri)")
@@ -227,6 +238,8 @@ private fun resolveCliUri(args: JsonObject?): String? {
             args.str("command")?.let { "boss://terminal?command=${enc(it)}" } ?: "boss://terminal"
         args.bool("open_folder") == true -> args.str("path")?.let { "boss://folder?path=${enc(it)}" }
         args.bool("open_url") == true -> args.str("url")?.let { "boss://url?url=${enc(it)}" }
+        args.bool("split_window") == true ->
+            "boss://split?orientation=${enc(args.str("orientation") ?: "vertical")}"
         // Shorthand: a bare panel_id with no explicit open_* flag still opens the panel.
         args.str("panel_id") != null -> "boss://plugin?id=${enc(args.str("panel_id")!!)}"
         else -> null
