@@ -239,7 +239,7 @@ private fun resolveCliUri(args: JsonObject?): String? {
         args.bool("open_folder") == true -> args.str("path")?.let { "boss://folder?path=${enc(it)}" }
         args.bool("open_url") == true -> args.str("url")?.let { "boss://url?url=${enc(it)}" }
         args.bool("split_window") == true ->
-            "boss://split?orientation=${enc(args.str("orientation") ?: "vertical")}"
+            "boss://split?orientation=${enc(args.str("orientation")?.ifBlank { null } ?: "vertical")}"
         // Shorthand: a bare panel_id with no explicit open_* flag still opens the panel.
         args.str("panel_id") != null -> "boss://plugin?id=${enc(args.str("panel_id")!!)}"
         else -> null

@@ -112,10 +112,6 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
             mcpLogger.warn(LogCategory.TERMINAL, "Failed to register McpServerController", error = t)
         }
 
-        // Contribute list_active_tabs/focus_active_tab MCP tools; auto-removed when
-        // this plugin is disabled/unloaded (see ActiveTabsMcpTools.kt).
-        context.registerMcpToolProvider(ActiveTabsMcpToolProvider(pluginId) { context.activeTabsProvider })
-
         // Register as a main panel TAB TYPE (not a sidebar panel!)
         context.tabRegistry.registerTabType(TerminalTabType) { tabInfo, ctx ->
             TerminalTabComponent(ctx, tabInfo, context)
