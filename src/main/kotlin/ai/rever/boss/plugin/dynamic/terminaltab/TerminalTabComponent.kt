@@ -66,6 +66,11 @@ class TerminalTabComponent(
 
     private var titleSyncJob: Job? = null
     private var titleSyncState: TabbedTerminalState? = null
+
+    // Not redundant with the collector's distinctUntilChanged(): that only dedups
+    // within one collector, and ensureTitleSync restarts the collector on re-attach
+    // (terminal reset), where distinctUntilChanged starts empty. This survives
+    // restarts so a re-attach doesn't re-push the unchanged title to the host.
     private var lastPushedTitle: String = config.title
 
     init {
@@ -103,6 +108,9 @@ class TerminalTabComponent(
                 (tabs.getOrNull(activeIndex) ?: tabs.firstOrNull())?.title
             }
                 .filterNotNull()
+                // Deliberately keep the last non-empty title instead of blanking
+                // the host tab on a title clear — same policy as the focused-pane
+                // path this replaces (TabbedTerminal drops empty window titles).
                 .filter { it.isNotEmpty() }
                 .distinctUntilChanged()
                 .collect { title ->
