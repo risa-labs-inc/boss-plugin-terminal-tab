@@ -64,6 +64,10 @@ class TerminalTabComponent(
         context.tabUpdateProviderFactory?.createProvider(config.id, TerminalTabType.typeId)
     }
 
+    // The three fields below are Main-thread confined: ensureTitleSync is called
+    // from a LaunchedEffect and the collector runs on coroutineScope, both
+    // Dispatchers.Main. That confinement is what makes the unguarded mutation
+    // safe — don't move coroutineScope off Main without adding synchronization.
     private var titleSyncJob: Job? = null
     private var titleSyncState: TabbedTerminalState? = null
 
