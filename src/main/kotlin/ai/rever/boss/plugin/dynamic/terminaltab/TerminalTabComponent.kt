@@ -106,6 +106,13 @@ class TerminalTabComponent(
     private fun ensureTitleSync(state: TabbedTerminalState) {
         if (titleSyncState === state && titleSyncJob?.isActive == true) return
         titleSyncJob?.cancel()
+        if (titleSyncState != null && titleSyncState !== state) {
+            // A replaced instance means the terminal was reset and recreated:
+            // drop the dedup baseline so the fresh session's first title always
+            // reaches the host, even if it textually matches the pre-reset push
+            // ("" never occurs as a title, so the next emission can't be deduped).
+            lastPushedTitle = ""
+        }
         titleSyncState = state
         titleSyncJob = coroutineScope.launch {
             combine(state.tabsFlow, state.activeTabIndexFlow) { tabs, activeIndex ->
@@ -154,6 +161,11 @@ class TerminalTabComponent(
         // PersistentTabbedTerminalContent below has getOrCreate'd the state —
         // get() must not create it here, or the isNew/initialCommand logic in
         // PersistentTabbedTerminalContentImpl would see a stale registry hit.
+        // Known gap: after resetAllTerminals() this effect re-fires only for
+        // the ACTIVE tab (the host composes background tabs' Content() lazily),
+        // so a background tab keeps collecting its disposed state — quiet and
+        // harmless — and re-attaches on next view. Its session died in the
+        // reset, so no title changes are missed in the meantime.
         val windowIdProvider = LocalWindowIdProvider.current
         val resetGeneration by TabbedTerminalStateRegistry.resetGeneration.collectAsState()
         LaunchedEffect(windowIdProvider, resetGeneration) {
