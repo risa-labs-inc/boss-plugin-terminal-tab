@@ -60,7 +60,9 @@ group = "ai.rever.boss.plugin.dynamic"
 // (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.126.md).
 // 2.5.11: auto-bumped bundled BossTerm to 1.2.128
 // (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.128.md).
-version = "2.5.13"
+// 2.5.14: auto-bumped bundled BossTerm to 1.2.130
+// (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.130.md).
+version = "2.5.14"
 
 java {
     toolchain {
@@ -80,6 +82,7 @@ val bossPluginApiPath = "../boss-plugin-api"
 
 // BossTerm version is now private to this plugin. Bumping bossterm only
 // requires re-releasing this plugin, not BossConsole.
+// 1.2.130: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.130.md).
 // 1.2.128: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.128.md).
 // 1.2.126: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.126.md).
 // 1.2.125: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.125.md).
@@ -114,7 +117,7 @@ val bossPluginApiPath = "../boss-plugin-api"
 // command palette, workflows, history search, session restore; compose-ui
 // compiles with -Xjvm-default=all (no $DefaultImpls bridges). 1.1.101 added
 // the `bossterm.settings.dir` relocation hook this plugin relies on.
-val bosstermVersion = "1.2.128"
+val bosstermVersion = "1.2.130"
 
 repositories {
     google()
