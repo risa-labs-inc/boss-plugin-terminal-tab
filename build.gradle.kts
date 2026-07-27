@@ -189,6 +189,20 @@ dependencies {
 
     // Coroutines — provided by host
     compileOnly("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+
+    // Tests run outside the host, so everything the host would provide at
+    // runtime has to be a real dependency here (compileOnly is not on the test
+    // classpath). Kept to the two the tests actually touch.
+    testImplementation(kotlin("test"))
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+    // The Compose compiler plugin also processes the test source set and refuses
+    // to run without the runtime on the classpath, even though no test is
+    // @Composable. Test-only, so nothing extra lands in the plugin JAR.
+    testImplementation(compose.runtime)
+}
+
+tasks.withType<Test>().configureEach {
+    useJUnitPlatform()
 }
 
 // Task to build plugin JAR with compiled classes + bossterm-compose bundled.
