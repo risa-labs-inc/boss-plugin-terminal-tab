@@ -98,6 +98,10 @@ val bossPluginApiPath = "../boss-plugin-api"
 
 // BossTerm version is now private to this plugin. Bumping bossterm only
 // requires re-releasing this plugin, not BossConsole.
+// 1.2.141 ships the `VoiceToolSource` seam this plugin now implements: an
+// embedder can hand the in-app voice agent ("Call Boss") its own tool surface,
+// and rename the call button via `callLabel`. See BossVoiceToolSource.kt.
+// (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.141.md).
 // 1.2.139: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.139.md).
 // 1.2.138: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.138.md).
 // 1.2.137: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.137.md).
@@ -141,7 +145,7 @@ val bossPluginApiPath = "../boss-plugin-api"
 // command palette, workflows, history search, session restore; compose-ui
 // compiles with -Xjvm-default=all (no $DefaultImpls bridges). 1.1.101 added
 // the `bossterm.settings.dir` relocation hook this plugin relies on.
-val bosstermVersion = "1.2.139"
+val bosstermVersion = "1.2.141"
 
 repositories {
     google()
@@ -189,6 +193,23 @@ dependencies {
 
     // Coroutines — provided by host
     compileOnly("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+
+    // Tests. The two runtime deps the host normally provides (boss-plugin-api,
+    // coroutines) have to be real on the test classpath — `compileOnly` above
+    // keeps them out of the JAR, which is right for shipping and useless for a
+    // JVM test. bossterm-compose is already `implementation`, so the voice seam
+    // (ExternalVoiceTool / VoiceToolPolicy) comes along for free.
+    testImplementation(kotlin("test"))
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+    if (useLocalDependencies) {
+        testImplementation(files("$bossPluginApiPath/build/libs/boss-plugin-api-1.0.55.jar"))
+    } else {
+        testImplementation(files("build/downloaded-deps/boss-plugin-api.jar"))
+    }
+}
+
+tasks.withType<Test>().configureEach {
+    useJUnitPlatform()
 }
 
 // Task to build plugin JAR with compiled classes + bossterm-compose bundled.
