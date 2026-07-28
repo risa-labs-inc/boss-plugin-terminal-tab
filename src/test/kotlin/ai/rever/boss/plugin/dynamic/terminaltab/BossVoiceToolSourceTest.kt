@@ -106,7 +106,7 @@ class BossVoiceToolSourceTest {
         assertTrue(tool.irreversible, "a destructive host tool must be confirmation-gated")
     }
 
-    // ------------------------------------------------- BossTerm's own thirteen
+    // ------------------------------------------------ BossTerm's own fourteen
 
     @Test
     fun `never offers a tool BossTerm already advertises`() {
@@ -132,9 +132,15 @@ class BossVoiceToolSourceTest {
         val offered = source(registry).tools().map { it.name }.toSet()
 
         assertTrue(offered.intersect(BOSSTERM_OWN_TOOL_NAMES).isEmpty())
-        // 105 registry tools (107 external minus the 2 this plugin defines itself,
-        // which the fixture also lists) + the 2 host tools projected once each.
-        assertEquals(LIVE_EXTERNAL_TOOL_NAMES.size, offered.size)
+        // Not the whole external surface: the measured surface is past the ceiling,
+        // so what comes back is MAX_EXTERNAL_TOOLS advertisable plus the withheld
+        // ones, which are exempt from the count. See the ceiling tests below.
+        assertEquals(
+            BossVoiceToolSource.MAX_EXTERNAL_TOOLS + LIVE_EXTERNAL_TOOL_NAMES.count {
+                BossVoiceToolSafety.isSecret(it)
+            },
+            offered.size,
+        )
     }
 
     // --------------------------------------------------------------- dynamism
@@ -292,7 +298,9 @@ class BossVoiceToolSourceTest {
             it.startsWith("role_") || it.startsWith("permission") || it.startsWith("user") ||
                 it == "roles_list" || it == "users_list"
         }
-        assertEquals(12, rbac.size)
+        // 7 of the 12 RBAC tools, because the ceiling has already taken the last 5
+        // — which is the priority table doing its job, asserted in its own test.
+        assertEquals(7, rbac.size)
         assertEquals(advertisable.takeLast(rbac.size), rbac)
     }
 
@@ -316,6 +324,110 @@ class BossVoiceToolSourceTest {
         assertEquals(forward, shuffled)
     }
 
+    // ------------------------------------------------- the derived ceiling
+
+    @Test
+    fun `BossTerm's own tool names are read from BossTerm, not mirrored`() {
+        // The derivation this whole ceiling rests on. If it silently returned the
+        // wrong set, MAX_EXTERNAL_TOOLS would be wrong by the same amount and the
+        // failure would be a rejected session, so it is asserted against the names
+        // a live `manage_tools list` reports plus the always-on meta-tool.
+        assertEquals(BOSSTERM_OWN_TOOL_NAMES_EXPECTED, bossTermOwnToolNames)
+        assertEquals(14, bossTermOwnToolNames.size)
+        assertTrue(
+            "close_panel" in bossTermOwnToolNames,
+            "close_panel is one of BossTerm's write tools; the hand-written list this replaced " +
+                "had drifted and omitted it",
+        )
+        assertTrue("manage_tools" in bossTermOwnToolNames, "always registered, never disablable")
+    }
+
+    @Test
+    fun `the reserved set covers BossTerm's tools and this plugin's own`() {
+        // The bridge and the voice surface share one answer to "whose name is this".
+        assertEquals(bossTermOwnToolNames + setOf("cli", "run_in_sidebar"), RESERVED_TOOL_NAMES)
+    }
+
+    @Test
+    fun `the ceiling is derived from the budget rather than written down`() {
+        assertEquals(
+            BossVoiceToolSource.MAX_ADVERTISED_TOOLS - bossTermOwnToolNames.size,
+            BossVoiceToolSource.MAX_EXTERNAL_TOOLS,
+        )
+        // Today's arithmetic, stated so a change to either side is visible.
+        assertEquals(128, BossVoiceToolSource.MAX_ADVERTISED_TOOLS)
+        assertEquals(114, BossVoiceToolSource.MAX_EXTERNAL_TOOLS)
+    }
+
+    @Test
+    fun `the policy and the backstop enforce the same ceiling`() {
+        // The two layers are redundant by design, which means neither can be observed
+        // through the other: the backstop trims to exactly the number the policy
+        // would have enforced, so deleting the policy's ceiling changes nothing
+        // measurable. Asserting they agree is the only way to see it — and what it
+        // guards is real, because a missing `maxExternalTools` silently falls back to
+        // BossTerm's default of 64, which is 50 tools this plugin never decided to
+        // drop.
+        assertEquals(
+            BossVoiceToolSource.MAX_EXTERNAL_TOOLS,
+            source(FakeToolRegistry()).policy.maxExternalTools,
+        )
+    }
+
+    @Test
+    fun `the backstop drops past the ceiling even with the policy ignored`() {
+        // The policy is not consulted here at all: this asserts the list `tools()`
+        // itself returns, which is what reaches BossTerm. A surface far past the
+        // limit must come back trimmed rather than trusted to a ceiling BossTerm
+        // enforces on this class's behalf.
+        val many = (1..300).map { toolDef("zz_tool_$it") }
+        val source = source(FakeToolRegistry(many))
+
+        val advertisable = source.tools().filterNot { it.sensitive }
+
+        assertEquals(BossVoiceToolSource.MAX_EXTERNAL_TOOLS, advertisable.size)
+        assertTrue(
+            advertisable.size + bossTermOwnToolNames.size <= BossVoiceToolSource.MAX_ADVERTISED_TOOLS,
+        )
+    }
+
+    @Test
+    fun `the backstop keeps withheld tools so they still refuse by name`() {
+        // Secret tools cost no ceiling slot (BossTerm excludes them before counting),
+        // and they have to stay in the list or the agent hears "unknown tool" instead
+        // of "that is withheld" — the one place the honest answer matters most.
+        val secrets = listOf("secret_get", "my_secret_get", "secrets_list")
+        val registry = FakeToolRegistry((1..300).map { toolDef("zz_tool_$it") } + secrets.map { toolDef(it) })
+
+        val returned = source(registry).tools()
+
+        secrets.forEach { name ->
+            val tool = returned.firstOrNull { it.name == name }
+            assertNotNull(tool, "$name must survive the trim so it can be refused by name")
+            assertTrue(tool.sensitive)
+        }
+        assertEquals(BossVoiceToolSource.MAX_EXTERNAL_TOOLS, returned.count { !it.sensitive })
+    }
+
+    @Test
+    fun `the live surface loses exactly the RBAC tail to the ceiling`() {
+        val registry = FakeToolRegistry(
+            LIVE_EXTERNAL_TOOL_NAMES.filterNot { it in setOf("cli", "run_in_sidebar") }
+                .shuffled()
+                .map { toolDef(it) }
+        )
+
+        val advertisable = source(registry).tools().filterNot { it.sensitive }.map { it.name }
+        val all = LIVE_EXTERNAL_TOOL_NAMES.filterNot { BossVoiceToolSafety.isSecret(it) }
+
+        assertEquals(119, all.size, "advertisable tools on the measured surface")
+        assertEquals(BossVoiceToolSource.MAX_EXTERNAL_TOOLS, advertisable.size)
+        assertEquals(
+            listOf("roles_list", "user_role_assign", "user_role_remove", "user_search", "users_list"),
+            (all - advertisable.toSet()).sorted(),
+        )
+    }
+
     @Test
     fun `the ceiling keeps the whole advertised surface under the function limit`() {
         // The invariant the ceiling exists for, and the one that cannot rot: it is
@@ -331,44 +443,6 @@ class BossVoiceToolSourceTest {
                 "session.update; past 128 functions that is a rejected session, not a slow one.",
         )
     }
-
-    @Test
-    fun `when the surface exceeds the ceiling the survivors are the useful families`() {
-        // The live surface IS past the ceiling, so this is the behaviour the user
-        // actually gets rather than a hypothetical. What must hold is that the
-        // casualties are the tail of the priority table, not an arbitrary slice.
-        val registry = FakeToolRegistry(
-            LIVE_EXTERNAL_TOOL_NAMES.filterNot { it in setOf("cli", "run_in_sidebar") }
-                .shuffled()
-                .map { toolDef(it) }
-        )
-        val source = source(registry)
-
-        val advertisable = source.tools().filterNot { source.policy.isExcluded(it) }.map { it.name }
-        val overflow = advertisable.size - BossVoiceToolSource.MAX_EXTERNAL_TOOLS
-        assertTrue(overflow > 0, "fixture no longer exceeds the ceiling; this test is now vacuous")
-
-        val survives = advertisable.take(BossVoiceToolSource.MAX_EXTERNAL_TOOLS)
-        val dropped = advertisable.drop(BossVoiceToolSource.MAX_EXTERNAL_TOOLS)
-
-        // Everything a person plausibly asks for by voice must be on the safe side.
-        listOf(
-            "cli", "run_in_sidebar", "git_status", "git_log", "codebase_read", "codebase_write",
-            "console_tail", "run_config_run", "browser_navigate", "docker_ps", "k8s_pods",
-            "k8s_get", "k8s_apply", "flow_run", "rpa_run", "evolver_evolve", "plugins_list",
-        ).forEach { assertTrue(it in survives, "$it must survive the ceiling") }
-
-        // And the casualties are all RBAC — admin-console work, least plausible by
-        // voice, and BossTerm logs every one of them by name.
-        dropped.forEach {
-            assertTrue(
-                it.startsWith("role") || it.startsWith("user"),
-                "$it was dropped for the ceiling but is not part of the RBAC tail",
-            )
-        }
-    }
-
-    // ------------------------------------------------------ policy consistency
 
     @Test
     fun `policy and per-tool flags agree on the whole live surface`() {

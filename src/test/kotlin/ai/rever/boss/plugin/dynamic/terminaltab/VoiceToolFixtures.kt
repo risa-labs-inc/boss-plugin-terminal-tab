@@ -117,11 +117,23 @@ internal val LIVE_BOSS_TOOL_NAMES: List<String> = listOf(
     "user_role_assign", "user_role_remove", "user_search", "users_list",
 )
 
-/** BossTerm's own thirteen, which its voice executor advertises from its own registry. */
-internal val BOSSTERM_OWN_TOOL_NAMES: Set<String> = setOf(
+/**
+ * BossTerm's own tools, which its voice executor advertises from its own registry.
+ *
+ * Deliberately NOT a hand-written copy — [bossTermOwnToolNames] reads BossTerm's
+ * public registration lists, and a copy here would be free to drift from it in
+ * exactly the way the copy it replaced did (it was missing `close_panel`). The
+ * literal set below is asserted against the derived one in
+ * BossVoiceToolSourceTest, so this stays a readable statement of what is expected
+ * while the code under test uses the real thing.
+ */
+internal val BOSSTERM_OWN_TOOL_NAMES: Set<String> = bossTermOwnToolNames
+
+/** What [bossTermOwnToolNames] is expected to contain: 13 built-ins + manage_tools. */
+internal val BOSSTERM_OWN_TOOL_NAMES_EXPECTED: Set<String> = setOf(
     "list_tabs", "get_active_tab", "list_panes", "read_scrollback", "search_output",
     "get_last_command", "read_debug_console", "send_input", "send_signal", "run_in_panel",
-    "run_command", "show_image", "manage_tools",
+    "close_panel", "run_command", "show_image", "manage_tools",
 )
 
 /** The 107 that reach [BossVoiceToolSource]: everything on the server that is not BossTerm's. */
