@@ -78,7 +78,9 @@ group = "ai.rever.boss.plugin.dynamic"
 // (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.138.md).
 // 2.5.31: auto-bumped bundled BossTerm to 1.2.139
 // (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.139.md).
-version = "2.5.32"
+// 2.5.33: auto-bumped bundled BossTerm to 1.2.140
+// (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.140.md).
+version = "2.5.34"
 
 java {
     toolchain {
@@ -102,6 +104,7 @@ val bossPluginApiPath = "../boss-plugin-api"
 // embedder can hand the in-app voice agent ("Call Boss") its own tool surface,
 // and rename the call button via `callLabel`. See BossVoiceToolSource.kt.
 // (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.141.md).
+// 1.2.140: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.140.md).
 // 1.2.139: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.139.md).
 // 1.2.138: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.138.md).
 // 1.2.137: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.137.md).
