@@ -44,7 +44,7 @@ class BossVoiceToolSafetyTest {
         // and roles_list all read things that sound credential-adjacent.
         val kept = LIVE_EXTERNAL_TOOL_NAMES.filterNot { BossVoiceToolSafety.isSecret(it) }
 
-        assertEquals(100, kept.size)
+        assertEquals(120, kept.size)
         listOf("browser_get_url", "prompt_get", "permissions_list", "roles_list", "codebase_read")
             .forEach { assertTrue(it in kept, "$it should stay available") }
     }
@@ -109,6 +109,9 @@ class BossVoiceToolSafetyTest {
             "browser_run_js", "git_checkout",
             "prompt_upsert", "download_cancel",
             "permission_create", "role_create", "role_grant_permission", "user_role_assign",
+            // Mutate a live cluster. k8s_use_context mutates nothing and is gated
+            // because it re-aims every later k8s call at a different cluster.
+            "k8s_apply", "k8s_scale", "k8s_rollout_restart", "k8s_use_context",
         ).forEach {
             assertFalse(
                 VoiceToolPolicy.looksIrreversible(it),
@@ -135,6 +138,11 @@ class BossVoiceToolSafetyTest {
             "plugin_enable", "plugins_list", "prompt_get", "prompt_list",
             "performance_gc", "performance_snapshot", "download_pause", "download_resume",
             "roles_list", "permissions_list", "users_list", "user_search", "role_permissions",
+            // Cluster reads, plus the two whose ungating is a judgement: k8s_exec
+            // opens a shell for the user to type in, k8s_port_forward has a stop.
+            "k8s_get", "k8s_pods", "k8s_logs", "k8s_describe", "k8s_yaml", "k8s_events",
+            "k8s_contexts", "k8s_namespaces", "k8s_manifests", "k8s_forwards",
+            "k8s_exec", "k8s_port_forward",
         ).forEach {
             assertFalse(BossVoiceToolSafety.isIrreversible(it), "$it should NOT be gated")
         }
@@ -167,12 +175,12 @@ class BossVoiceToolSafetyTest {
             .filterNot { BossVoiceToolSafety.isSecret(it) }
             .filter { BossVoiceToolSafety.isIrreversible(it) }
 
-        // 22 of these are gated only because of this file; the other 10 the floor
+        // 26 of these are gated only because of this file; the other 11 the floor
         // already caught. Pinned as a number so widening either rule has to come
         // with a deliberate edit here rather than sliding in.
-        assertEquals(32, gated.size, "gated tools on the live surface: $gated")
+        assertEquals(37, gated.size, "gated tools on the live surface: $gated")
         assertEquals(
-            22,
+            26,
             gated.count { !VoiceToolPolicy.looksIrreversible(it) },
             "tools gated only by this file's rules",
         )
