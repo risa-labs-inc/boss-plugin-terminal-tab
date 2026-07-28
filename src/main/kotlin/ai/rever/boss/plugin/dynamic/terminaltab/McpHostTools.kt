@@ -19,125 +19,172 @@ import java.net.URLEncoder
 private val hostToolsLogger = BossLogger.forComponent("TerminalTabMcpHostTools")
 
 /**
- * Registers the host-facing MCP tools that let an agent drive BossConsole the way
- * the in-app UI does: open the sidebar terminal and run a command (the "Runner")
- * and dispatch the `boss` CLI's deep-link verbs. Wired into the `boss` MCP server
- * via [ai.rever.bossterm.compose.mcp.BossTermMcpConfig.additionalTools], so the
- * tools surface client-side as `mcp__boss__run_in_sidebar` / `mcp__boss__cli`
- * (names in `additionalTools` are NOT prefixed; the server is keyed `boss`).
+ * One host-facing tool, declared once.
  *
- * Both tools reach host-internal classes (`DeepLinkHandler`, `WindowFocusManager`)
- * by reflection — the same pattern [TabbedTerminalStateRegistry]'s `ShellUtils` /
+ * Two consumers project this: [bossHostMcpTools] registers it on the `boss` MCP
+ * server, and [BossVoiceToolSource] advertises it to the in-app voice agent. The
+ * shape is deliberately the intersection of what each needs — a name, the
+ * model-facing description, the argument schema, and something callable — so that
+ * neither consumer restates the other's copy. BossTerm's `VoiceToolSource` KDoc
+ * makes the same argument about its own surface: a tool's description and schema
+ * belong to the place the tool is defined, or the voice agent and the tool's real
+ * caller end up describing it differently.
+ *
+ * [handler] is a plain suspend function rather than the MCP SDK's
+ * request→result lambda so the voice path can call it without constructing an SDK
+ * `CallToolRequest` for a server it is not talking to.
+ */
+internal class HostMcpTool(
+    val name: String,
+    val description: String,
+    val schema: ToolSchema,
+    val handler: suspend (JsonObject) -> CallToolResult,
+)
+
+/**
+ * The host-facing tools that let an agent drive BossConsole the way the in-app UI
+ * does: open the sidebar terminal and run a command (the "Runner") and dispatch
+ * the `boss` CLI's deep-link verbs.
+ *
+ * Both reach host-internal classes (`DeepLinkHandler`, `WindowFocusManager`) by
+ * reflection — the same pattern [TabbedTerminalStateRegistry]'s `ShellUtils` /
  * `TerminalLinkEventBus` hops use — so the plugin needs no host or boss-plugin-api
  * change. Every host hop is guarded: a missing/renamed host class degrades the
- * tool to an MCP error result and never breaks terminals or the MCP server itself.
+ * tool to an error result and never breaks terminals, the MCP server or a call.
+ */
+internal val bossHostMcpToolDefs: List<HostMcpTool> = listOf(
+    HostMcpTool(
+        name = "run_in_sidebar",
+        description = RUN_IN_SIDEBAR_DESCRIPTION,
+        schema = runInSidebarSchema(),
+        handler = ::runInSidebar,
+    ),
+    HostMcpTool(
+        name = "cli",
+        description = CLI_DESCRIPTION,
+        schema = cliSchema(),
+        handler = ::cli,
+    ),
+)
+
+/**
+ * Register [bossHostMcpToolDefs] on the live MCP server. Wired into the `boss`
+ * server via [ai.rever.bossterm.compose.mcp.BossTermMcpConfig.additionalTools], so
+ * the tools surface client-side as `mcp__boss__run_in_sidebar` / `mcp__boss__cli`
+ * (names in `additionalTools` are NOT prefixed; the server is keyed `boss`).
  */
 internal val bossHostMcpTools: (Server) -> Unit = { server ->
-    registerRunInSidebar(server)
-    registerCliTool(server)
+    for (tool in bossHostMcpToolDefs) {
+        server.addTool(
+            name = tool.name,
+            description = tool.description,
+            inputSchema = tool.schema,
+        ) { request ->
+            tool.handler(request.arguments ?: JsonObject(emptyMap()))
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Tool 1: run_in_sidebar — open the sidebar terminal and run a command
 // ---------------------------------------------------------------------------
 
-private fun registerRunInSidebar(server: Server) {
-    server.addTool(
-        name = "run_in_sidebar",
-        description = "Open BossConsole's sidebar terminal in the focused window and run a shell " +
-                "command there — the same flow as the in-app Runner. The sidebar terminal then " +
-                "appears in list_tabs / read_scrollback like any other tab, so you can read its " +
-                "output afterwards. Pass config_id to keep a stable tab per run configuration, and " +
-                "is_rerun=true (with config_id) to re-run in that existing tab (sends Ctrl+C, " +
-                "clears, then re-runs) instead of opening a new one.",
-        inputSchema = ToolSchema(
-            properties = buildJsonObject {
-                putJsonObject("command") {
-                    put("type", "string")
-                    put("description", "Shell command to run in the sidebar terminal.")
-                }
-                putJsonObject("working_dir") {
-                    put("type", "string")
-                    put("description", "Optional working directory to cd into before running.")
-                }
-                putJsonObject("config_id") {
-                    put("type", "string")
-                    put("description", "Optional stable id for this run configuration; reused as " +
-                            "the tab id so re-runs land in the same tab.")
-                }
-                putJsonObject("is_rerun") {
-                    put("type", "boolean")
-                    put("description", "When true (with config_id), re-run in the existing tab " +
-                            "instead of opening a new one. Default false.")
-                }
-                putJsonObject("name") {
-                    put("type", "string")
-                    put("description", "Optional label for this run in the top-bar runner dropdown. " +
-                            "Defaults to the command.")
-                }
-            },
-            required = listOf("command")
-        )
-    ) { request ->
-        val args = request.arguments
-        val command = args.str("command")
-        if (command.isNullOrBlank()) {
-            return@addTool errorResult("Missing required argument: command")
-        }
-        val workingDir = args.str("working_dir")
-        val isRerun = args.bool("is_rerun") ?: false
+private const val RUN_IN_SIDEBAR_DESCRIPTION =
+    "Open BossConsole's sidebar terminal in the focused window and run a shell " +
+        "command there — the same flow as the in-app Runner. The sidebar terminal then " +
+        "appears in list_tabs / read_scrollback like any other tab, so you can read its " +
+        "output afterwards. Pass config_id to keep a stable tab per run configuration, and " +
+        "is_rerun=true (with config_id) to re-run in that existing tab (sends Ctrl+C, " +
+        "clears, then re-runs) instead of opening a new one."
 
-        // Stable id used as BOTH the sidebar tab id and the runner config id, so the
-        // top-bar runner's running-state and the tab's close-cleanup line up. When the
-        // caller doesn't supply one, derive a stable id from the command so re-runs of
-        // the same command reuse the same tab/entry instead of piling up.
-        val configId = args.str("config_id") ?: "mcp-run-${command.hashCode()}"
-        val runName = args.str("name")
-            ?: command.trim().lineSequence().firstOrNull()?.take(60)?.ifBlank { null }
-            ?: command
+private fun runInSidebarSchema(): ToolSchema =
+    ToolSchema(
+        properties = buildJsonObject {
+            putJsonObject("command") {
+                put("type", "string")
+                put("description", "Shell command to run in the sidebar terminal.")
+            }
+            putJsonObject("working_dir") {
+                put("type", "string")
+                put("description", "Optional working directory to cd into before running.")
+            }
+            putJsonObject("config_id") {
+                put("type", "string")
+                put("description", "Optional stable id for this run configuration; reused as " +
+                        "the tab id so re-runs land in the same tab.")
+            }
+            putJsonObject("is_rerun") {
+                put("type", "boolean")
+                put("description", "When true (with config_id), re-run in the existing tab " +
+                        "instead of opening a new one. Default false.")
+            }
+            putJsonObject("name") {
+                put("type", "string")
+                put("description", "Optional label for this run in the top-bar runner dropdown. " +
+                        "Defaults to the command.")
+            }
+        },
+        required = listOf("command")
+    )
 
-        val windowId = focusedWindowId()
-            ?: return@addTool errorResult("No focused BossConsole window; focus a window and retry.")
+private suspend fun runInSidebar(args: JsonObject): CallToolResult {
+    val command = args.str("command")
+    if (command.isNullOrBlank()) {
+        return errorResult("Missing required argument: command")
+    }
+    val workingDir = args.str("working_dir")
+    val isRerun = args.bool("is_rerun") ?: false
 
-        val started = try {
-            TabbedTerminalStateRegistry.newSidebarTab(
-                windowId = windowId,
-                command = command,
-                workingDirectory = workingDir,
-                configId = configId,
-                isRerun = isRerun
-            )
-        } catch (t: Throwable) {
-            hostToolsLogger.warn(LogCategory.TERMINAL, "run_in_sidebar: newSidebarTab failed", error = t)
-            return@addTool errorResult("Failed to start sidebar command: ${t.message}")
-        }
+    // Stable id used as BOTH the sidebar tab id and the runner config id, so the
+    // top-bar runner's running-state and the tab's close-cleanup line up. When the
+    // caller doesn't supply one, derive a stable id from the command so re-runs of
+    // the same command reuse the same tab/entry instead of piling up.
+    val configId = args.str("config_id") ?: "mcp-run-${command.hashCode()}"
+    val runName = args.str("name")
+        ?: command.trim().lineSequence().firstOrNull()?.take(60)?.ifBlank { null }
+        ?: command
 
-        // Ensure the sidebar terminal panel is visible. On a fresh open this also
-        // drives the pending-command consumption that actually runs the command
-        // (existing Runner flow); if the panel was already open, newSidebarTab
-        // already created/re-ran the tab above.
-        val panelRequested = processDeepLink("boss://plugin?id=terminal")
+    val windowId = focusedWindowId()
+        ?: return errorResult("No focused BossConsole window; focus a window and retry.")
 
-        // Register the run with the host runner so the top-bar runner reflects it
-        // (selects the config + shows running/Stop). Best-effort; the command still
-        // runs even if the host class isn't reachable.
-        val runnerUpdated = registerSidebarRunWithRunner(
+    val started = try {
+        TabbedTerminalStateRegistry.newSidebarTab(
             windowId = windowId,
-            configId = configId,
             command = command,
-            workingDir = workingDir,
-            name = runName
+            workingDirectory = workingDir,
+            configId = configId,
+            isRerun = isRerun
         )
+    } catch (t: Throwable) {
+        hostToolsLogger.warn(LogCategory.TERMINAL, "run_in_sidebar: newSidebarTab failed", error = t)
+        return errorResult("Failed to start sidebar command: ${t.message}")
+    }
 
-        jsonResult(isError = false) {
-            put("ok", started)
-            put("windowId", windowId)
-            put("command", command)
-            put("configId", configId)
-            put("isRerun", isRerun)
-            put("panelOpenRequested", panelRequested)
-            put("runnerUpdated", runnerUpdated)
-        }
+    // Ensure the sidebar terminal panel is visible. On a fresh open this also
+    // drives the pending-command consumption that actually runs the command
+    // (existing Runner flow); if the panel was already open, newSidebarTab
+    // already created/re-ran the tab above.
+    val panelRequested = processDeepLink("boss://plugin?id=terminal")
+
+    // Register the run with the host runner so the top-bar runner reflects it
+    // (selects the config + shows running/Stop). Best-effort; the command still
+    // runs even if the host class isn't reachable.
+    val runnerUpdated = registerSidebarRunWithRunner(
+        windowId = windowId,
+        configId = configId,
+        command = command,
+        workingDir = workingDir,
+        name = runName
+    )
+
+    return jsonResult(isError = false) {
+        put("ok", started)
+        put("windowId", windowId)
+        put("command", command)
+        put("configId", configId)
+        put("isRerun", isRerun)
+        put("panelOpenRequested", panelRequested)
+        put("runnerUpdated", runnerUpdated)
     }
 }
 
@@ -145,86 +192,86 @@ private fun registerRunInSidebar(server: Server) {
 // Tool 2: cli — dispatch a boss:// deep link (the `boss` CLI's verbs)
 // ---------------------------------------------------------------------------
 
-private fun registerCliTool(server: Server) {
-    server.addTool(
-        name = "cli",
-        description = "Run a BOSS action in the focused window via the host's boss:// deep-link " +
-                "dispatcher — the same verbs the `boss` command-line tool uses. Provide exactly " +
-                "ONE action: open_panel (+panel_id) to open any sidebar plugin/panel; open_terminal " +
-                "(+command) to open the MAIN terminal (for the sidebar Runner use run_in_sidebar); " +
-                "open_folder (+path) to open a folder in the codebase; open_url (+url) to open a " +
-                "URL in the browser; split_window (+orientation: vertical|horizontal, default " +
-                "vertical) to split BossConsole's main window; or a raw `uri` starting with boss://. " +
-                "Known panel ids: terminal, console, codebase, bookmarks, downloads, " +
-                "run-configurations, git-status, git-log, performance, topofmind, plugin-manager, " +
-                "secret-manager.",
-        inputSchema = ToolSchema(
-            properties = buildJsonObject {
-                putJsonObject("open_panel") {
-                    put("type", "boolean")
-                    put("description", "Open a sidebar panel/plugin by id (use with panel_id).")
-                }
-                putJsonObject("panel_id") {
-                    put("type", "string")
-                    put("description", "Panel id to open, e.g. console, codebase, terminal, git-status.")
-                }
-                putJsonObject("open_terminal") {
-                    put("type", "boolean")
-                    put("description", "Open the MAIN terminal (use with optional command).")
-                }
-                putJsonObject("command") {
-                    put("type", "string")
-                    put("description", "Command to run for open_terminal.")
-                }
-                putJsonObject("open_folder") {
-                    put("type", "boolean")
-                    put("description", "Open a folder in the codebase panel (use with path).")
-                }
-                putJsonObject("path") {
-                    put("type", "string")
-                    put("description", "Absolute folder path for open_folder.")
-                }
-                putJsonObject("open_url") {
-                    put("type", "boolean")
-                    put("description", "Open a URL in the in-app browser (use with url).")
-                }
-                putJsonObject("url") {
-                    put("type", "string")
-                    put("description", "URL to open for open_url.")
-                }
-                putJsonObject("split_window") {
-                    put("type", "boolean")
-                    put("description", "Split BossConsole's main window (use with optional orientation).")
-                }
-                putJsonObject("orientation") {
-                    put("type", "string")
-                    put("description", "Split orientation for split_window: \"vertical\" (default) or \"horizontal\".")
-                }
-                putJsonObject("uri") {
-                    put("type", "string")
-                    put("description", "Raw boss:// deep link (escape hatch); must start with boss://.")
-                }
-            },
-            required = emptyList()
+private const val CLI_DESCRIPTION =
+    "Run a BOSS action in the focused window via the host's boss:// deep-link " +
+        "dispatcher — the same verbs the `boss` command-line tool uses. Provide exactly " +
+        "ONE action: open_panel (+panel_id) to open any sidebar plugin/panel; open_terminal " +
+        "(+command) to open the MAIN terminal (for the sidebar Runner use run_in_sidebar); " +
+        "open_folder (+path) to open a folder in the codebase; open_url (+url) to open a " +
+        "URL in the browser; split_window (+orientation: vertical|horizontal, default " +
+        "vertical) to split BossConsole's main window; or a raw `uri` starting with boss://. " +
+        "Known panel ids: terminal, console, codebase, bookmarks, downloads, " +
+        "run-configurations, git-status, git-log, performance, topofmind, plugin-manager, " +
+        "secret-manager."
+
+private fun cliSchema(): ToolSchema =
+    ToolSchema(
+        properties = buildJsonObject {
+            putJsonObject("open_panel") {
+                put("type", "boolean")
+                put("description", "Open a sidebar panel/plugin by id (use with panel_id).")
+            }
+            putJsonObject("panel_id") {
+                put("type", "string")
+                put("description", "Panel id to open, e.g. console, codebase, terminal, git-status.")
+            }
+            putJsonObject("open_terminal") {
+                put("type", "boolean")
+                put("description", "Open the MAIN terminal (use with optional command).")
+            }
+            putJsonObject("command") {
+                put("type", "string")
+                put("description", "Command to run for open_terminal.")
+            }
+            putJsonObject("open_folder") {
+                put("type", "boolean")
+                put("description", "Open a folder in the codebase panel (use with path).")
+            }
+            putJsonObject("path") {
+                put("type", "string")
+                put("description", "Absolute folder path for open_folder.")
+            }
+            putJsonObject("open_url") {
+                put("type", "boolean")
+                put("description", "Open a URL in the in-app browser (use with url).")
+            }
+            putJsonObject("url") {
+                put("type", "string")
+                put("description", "URL to open for open_url.")
+            }
+            putJsonObject("split_window") {
+                put("type", "boolean")
+                put("description", "Split BossConsole's main window (use with optional orientation).")
+            }
+            putJsonObject("orientation") {
+                put("type", "string")
+                put("description", "Split orientation for split_window: \"vertical\" (default) or \"horizontal\".")
+            }
+            putJsonObject("uri") {
+                put("type", "string")
+                put("description", "Raw boss:// deep link (escape hatch); must start with boss://.")
+            }
+        },
+        required = emptyList()
+    )
+
+private suspend fun cli(args: JsonObject): CallToolResult {
+    val uri = resolveCliUri(args)
+        ?: return errorResult(
+            "Provide one action: open_panel+panel_id, open_terminal(+command), " +
+                    "open_folder+path, open_url+url, split_window(+orientation), or a raw " +
+                    "boss:// uri."
         )
-    ) { request ->
-        val uri = resolveCliUri(request.arguments)
-            ?: return@addTool errorResult(
-                "Provide one action: open_panel+panel_id, open_terminal(+command), " +
-                        "open_folder+path, open_url+url, split_window(+orientation), or a raw " +
-                        "boss:// uri."
-            )
-        if (!uri.startsWith("boss://")) {
-            return@addTool errorResult("Resolved uri must start with boss:// (got: $uri)")
-        }
-        val dispatched = processDeepLink(uri)
-        if (!dispatched) {
-            return@addTool errorResult("Host deep-link dispatcher unavailable (DeepLinkHandler not reachable).")
-        }
-        jsonResult(isError = false) {
-            put("ok", true)
-            put("uri", uri)
-        }
+    if (!uri.startsWith("boss://")) {
+        return errorResult("Resolved uri must start with boss:// (got: $uri)")
+    }
+    val dispatched = processDeepLink(uri)
+    if (!dispatched) {
+        return errorResult("Host deep-link dispatcher unavailable (DeepLinkHandler not reachable).")
+    }
+    return jsonResult(isError = false) {
+        put("ok", true)
+        put("uri", uri)
     }
 }
 
