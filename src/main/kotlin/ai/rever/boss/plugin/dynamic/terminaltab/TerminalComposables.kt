@@ -36,6 +36,15 @@ import kotlinx.coroutines.launch
 private val logger = BossLogger.forComponent("TerminalComposables")
 
 /**
+ * What Boss Calling's in-app button is called inside BossConsole.
+ *
+ * BossTerm defaults to "Call BossTerm" for the standalone app; here the agent is
+ * Boss. Renames the button, the shortcut hint and the tooltip — not the voice
+ * agent's own name, which it takes from its instructions.
+ */
+private const val CALL_LABEL = "Call Boss"
+
+/**
  * Tabbed terminal content for the sidebar panel.
  * Uses persistent state so runner commands can create tabs.
  */
@@ -136,6 +145,11 @@ internal fun TabbedTerminalContentImpl(
                     onShowSettings = onShowSettings,
                     onShowWelcomeWizard = { showWelcomeWizard = true },
                     onLinkClick = { info -> handleTerminalLinkClick(info, scope, SIDEBAR_TERMINAL_ID, windowId) },
+                    // Inside BossConsole the in-app voice agent is "Call Boss", and it
+                    // gets the `boss` MCP surface on top of BossTerm's own thirteen
+                    // terminal tools. See BossVoiceToolSource.
+                    callLabel = CALL_LABEL,
+                    voiceToolSource = BossVoiceTools.source,
                     modifier = Modifier.fillMaxSize()
                 )
               }
@@ -272,6 +286,10 @@ internal fun PersistentTabbedTerminalContentImpl(
                             handleTerminalLinkClick(info, scope, terminalId, windowId)
                         }
                     },
+                    // See the sidebar terminal above. EmbeddableTerminal (further down)
+                    // renders no call affordance, so it takes neither parameter.
+                    callLabel = CALL_LABEL,
+                    voiceToolSource = BossVoiceTools.source,
                     modifier = Modifier.fillMaxSize()
                 )
               }

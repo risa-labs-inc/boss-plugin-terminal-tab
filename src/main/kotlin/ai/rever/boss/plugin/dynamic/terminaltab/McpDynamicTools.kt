@@ -29,7 +29,7 @@ private val schemaJson = Json { ignoreUnknownKeys = true }
  * this plugin's host-facing tools (see [bossHostMcpTools]). A plugin-contributed
  * tool must never shadow one of these, so the bridge skips them.
  */
-private val RESERVED_TOOL_NAMES: Set<String> = setOf(
+internal val RESERVED_TOOL_NAMES: Set<String> = setOf(
     "list_tabs", "get_active_tab", "list_panes", "read_scrollback",
     "search_output", "get_last_command", "read_debug_console",
     "send_input", "send_signal", "run_in_panel", "run_command", "show_image",
@@ -167,8 +167,12 @@ private fun registerOne(server: Server, registry: McpToolRegistry, tool: Registe
  * Parse a plugin's JSON-Schema object string into the MCP SDK's [ToolSchema]
  * (which takes the inner `properties` object + the `required` list). Falls back
  * to an empty (no-argument) schema on any parse error.
+ *
+ * Shared with [BossVoiceToolSource], which projects the same registry onto the
+ * in-app voice agent: one parse means the MCP client and the voice agent cannot
+ * be shown different parameters for the same tool.
  */
-private fun parseSchema(schema: String): ToolSchema = try {
+internal fun parseSchema(schema: String): ToolSchema = try {
     val root = schemaJson.parseToJsonElement(schema) as? JsonObject
     val properties = (root?.get("properties") as? JsonObject) ?: buildJsonObject {}
     val required = (root?.get("required") as? JsonArray)

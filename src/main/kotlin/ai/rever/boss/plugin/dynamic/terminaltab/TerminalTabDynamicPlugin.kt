@@ -224,6 +224,11 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
             // it is active and vanish when it is disabled/unloaded. See
             // McpDynamicTools.kt / McpToolRegistryImpl in the host.
             val toolRegistry = pluginContext?.mcpToolRegistry
+            // The same registry backs Boss Calling's tool surface (the in-app voice
+            // agent reaches it through BossTerm's VoiceToolSource seam rather than
+            // over the MCP endpoint). Bound here because this is where the registry
+            // arrives; read per enumeration, never cached. See BossVoiceToolSource.
+            BossVoiceTools.bind(toolRegistry)
             // Re-arm the bridge in case this is a re-registration after dispose().
             resumeDynamicPluginTools()
             val config = BossTermMcpConfig(
@@ -367,6 +372,11 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         mcpServerController = null
         mcpManager = null
         TerminalMcpConfigHolder.config = null
+        // Drop the registry reference so a disposed host registry isn't held by the
+        // process-wide voice source across a disable/update cycle. The source itself
+        // survives (it is stateless) and simply offers the two host tools until a
+        // re-registration binds a live registry again.
+        BossVoiceTools.unbind()
 
         // Unregister tab type when plugin is unloaded
         pluginContext?.tabRegistry?.unregisterTabType(TerminalTabType.typeId)
