@@ -2,6 +2,8 @@ package ai.rever.boss.plugin.dynamic.terminaltab
 
 import ai.rever.boss.plugin.api.McpToolDefinition
 import ai.rever.boss.plugin.api.McpToolRegistry
+import ai.rever.boss.plugin.logging.BossLogger
+import ai.rever.boss.plugin.logging.LogCategory
 import ai.rever.bossterm.compose.voice.ExternalVoiceTool
 import ai.rever.bossterm.compose.voice.VoiceToolPolicy
 import ai.rever.bossterm.compose.voice.VoiceToolSource
@@ -10,6 +12,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+
+private val voiceLogger = BossLogger.forComponent("TerminalTabVoiceTools")
 
 /**
  * Process-wide holder for the `boss` tool surface offered to Boss Calling.
@@ -51,14 +55,20 @@ internal object BossVoiceTools {
  * The `boss` MCP server this plugin hosts serves three groups of tools, and they
  * have three different definition sites:
  *
- *  1. **BossTerm's own thirteen** (`run_command`, `read_scrollback`, `list_tabs`, …
- *     plus `manage_tools`) — registered by `BossTermMcpServer` itself. These are
- *     deliberately **not** projected here: BossTerm's voice executor already
- *     advertises them from `registeredToolInfo()`, which is their definition site.
- *     Re-exporting them would produce a second route to the same tool, past the
- *     scope and focused-pane logic in front of BossTerm's implementation — the
- *     case `VoiceToolCollisionPolicy.DropExternal` exists to catch. Leaving them
- *     out means the merge has nothing to drop rather than relying on it to.
+ *  1. **BossTerm's own fourteen** — thirteen built-ins (`run_command`,
+ *     `read_scrollback`, `list_tabs`, `close_panel`, …) plus the always-registered
+ *     `manage_tools`, enumerated in [bossTermOwnToolNames] by reading BossTerm's
+ *     own registration lists. These are deliberately **not** projected here:
+ *     BossTerm's voice executor already advertises them from
+ *     `registeredToolInfo()`, which is their definition site. Re-exporting them
+ *     would produce a second route to the same tool, past the scope and
+ *     focused-pane logic in front of BossTerm's implementation — the case
+ *     `VoiceToolCollisionPolicy.DropExternal` exists to catch. Leaving them out
+ *     means the merge has nothing to drop rather than relying on it to.
+ *
+ *     Fourteen, not the thirteen an earlier version of this file claimed: the
+ *     hand-written list it counted from was missing `close_panel`. Asking BossTerm
+ *     is what fixed that, and it is also what keeps the ceiling arithmetic honest.
  *  2. **This plugin's host-facing tools** ([bossHostMcpToolDefs] — `run_in_sidebar`
  *     and `cli`) — defined in `McpHostTools.kt`, which is now the single site both
  *     the MCP server and this class project from. Worth noting they are otherwise
@@ -71,8 +81,10 @@ internal object BossVoiceTools {
  *     them exactly as the MCP bridge does, so an agent on the MCP endpoint and the
  *     voice agent cannot be told different things about the same tool.
  *
- * Measured against a live instance: 120 tools on the server, 13 of them BossTerm's,
- * leaving **107 here** (2 host + 105 registry).
+ * Measured against a live instance: 140 tools on the server, 14 of them BossTerm's,
+ * leaving **126 here** (2 host + 124 registry). It was 120/107 earlier the same
+ * day — see [MAX_ADVERTISED_TOOLS] for why that rate of change decides how the
+ * ceiling is computed.
  *
  * ### Dynamic
  *
@@ -121,10 +133,65 @@ internal class BossVoiceToolSource(
         // out: BossTerm records them as refusals, so the agent hears "that is
         // withheld" instead of "unknown tool", and they are dropped before the
         // ceiling is counted so they cost no budget.
-        return (fromHost + fromRegistry).sortedWith(
+        val ordered = (fromHost + fromRegistry).sortedWith(
             compareBy({ priorityOf(it.name) }, { it.name }),
         )
+        return withinFunctionLimit(ordered)
     }
+
+    /**
+     * Enforce [MAX_EXTERNAL_TOOLS] here as well as in [policy], because this is the
+     * only place that can.
+     *
+     * [VoiceToolPolicy.maxExternalTools] does drop past the ceiling and log every
+     * casualty by name — but the ceiling it enforces is whatever number this class
+     * hands it. Nothing in BossTerm knows about 128; there is no such constant
+     * anywhere in its voice code. So if the policy is ever mis-wired, or a future
+     * BossTerm honours it differently, the list this method returns is the last
+     * thing between a 129-tool array and a rejected `session.update` — which does
+     * not degrade the call, it kills it, with the cause in a Realtime error field.
+     *
+     * Redundant with the policy today, deliberately, on the one failure that has no
+     * partial version.
+     *
+     * Withheld tools are exempt from the count and kept: BossTerm excludes them
+     * before it counts the ceiling, so they occupy no slot, and dropping them here
+     * would turn "that tool is withheld from the voice agent" into "unknown tool"
+     * for exactly the tools where the honest answer matters most.
+     */
+    private fun withinFunctionLimit(ordered: List<ExternalVoiceTool>): List<ExternalVoiceTool> {
+        val (withheld, advertisable) = ordered.partition { it.sensitive }
+        if (advertisable.size <= MAX_EXTERNAL_TOOLS) return ordered
+        val dropped = advertisable.drop(MAX_EXTERNAL_TOOLS)
+        logDroppedOnce(dropped.map { it.name })
+        return advertisable.take(MAX_EXTERNAL_TOOLS) + withheld
+    }
+
+    /**
+     * Warn once per distinct drop set.
+     *
+     * [tools] runs on every enumeration and again before every tool call, so
+     * logging unconditionally would put the same paragraph in the log several times
+     * a sentence. Keyed on the set rather than latched outright, because the
+     * informative event is the set *changing* — a plugin loading and pushing
+     * something new off the end is worth a line, the same five names on the
+     * hundredth enumeration is not.
+     */
+    private fun logDroppedOnce(names: List<String>) {
+        val key = names.joinToString(",")
+        if (key == lastDropKey) return
+        lastDropKey = key
+        voiceLogger.warn(
+            LogCategory.TERMINAL,
+            "Boss Calling: ${names.size} tool(s) past the ${MAX_EXTERNAL_TOOLS}-tool ceiling " +
+                "(${MAX_ADVERTISED_TOOLS} function budget minus BossTerm's " +
+                "${bossTermOwnToolNames.size}) are not advertised to the voice agent",
+            mapOf("dropped" to key),
+        )
+    }
+
+    @Volatile
+    private var lastDropKey: String? = null
 
     /**
      * Run one of this source's own tools.
@@ -215,21 +282,53 @@ internal class BossVoiceToolSource(
          *    (stated for Chat Completions; the Realtime `tools` array is the same
          *    shape, so treating it as the bound is the conservative reading).
          *
-         * 110 is the largest value that keeps the total (110 + 13 = 123) under that
-         * limit with headroom. The surface has therefore already outgrown what can
-         * be advertised, which makes [FAMILY_PRIORITY] load-bearing today rather
-         * than insurance: the ten tools currently past the ceiling are the tail of
-         * the RBAC family, by design. Lowering this back to 64 is a one-line
-         * change if the token cost outweighs the coverage; raising it above 115
-         * is not a trade, it is a rejected session.
+         * So the ceiling is not a taste question with a number to argue about. It is
+         * whatever is left of the budget after BossTerm has taken its share, and it
+         * is [derived][MAX_EXTERNAL_TOOLS] rather than written down:
+         *
+         *     MAX_EXTERNAL_TOOLS = MAX_ADVERTISED_TOOLS - bossTermOwnToolNames.size
+         *
+         * 128 − 14 = 114 today. The reason to derive it rather than hardcode 114 is
+         * the measurement above: the surface went from 107 tools to 127 in a single
+         * afternoon because someone installed a Kubernetes plugin. A constant that
+         * happens to be right about BossTerm's half is a constant that goes wrong
+         * the first time BossTerm ships a fourteenth built-in — and the failure mode
+         * is not a degraded call, it is `session.update` rejected, every tool gone
+         * and the call dead. Deriving it costs one subtraction.
+         *
+         * Two consequences worth stating:
+         *
+         *  - **The budget is conservative when write tools are off.**
+         *    `bossTermOwnToolNames` counts BossTerm's write tools whether or not
+         *    `allowWriteTools` advertises them, so with them off the real total is
+         *    below 128 rather than above it. Wrong in the safe direction.
+         *  - **[FAMILY_PRIORITY] is load-bearing today.** 119 tools are advertisable
+         *    against 114 slots, so five are dropped on every enumeration — the tail
+         *    of the RBAC family, by design, each one logged by name.
+         *
+         * Nothing here bounds the token cost, which is the other thing a ceiling
+         * used to be for: at 114 the external array is roughly 35 KB (~8.8k tokens)
+         * per turn. That is the honest price of the capability and the user's call to
+         * make, not this file's — but it is no longer what sets the number.
          */
-        const val MAX_EXTERNAL_TOOLS = 110
+        const val MAX_ADVERTISED_TOOLS = 128
+
+        /**
+         * The external half of [MAX_ADVERTISED_TOOLS] — 128 minus BossTerm's own.
+         *
+         * [coerceAtLeast] rather than a bare subtraction: a future BossTerm with more
+         * than 128 built-ins of its own would otherwise produce a negative ceiling,
+         * and `advertised.size >= negative` is true immediately, which is the same
+         * arithmetic bug wearing a different sign. Zero external tools is a bad
+         * afternoon; a negative ceiling is undefined behaviour in the merge.
+         */
+        val MAX_EXTERNAL_TOOLS: Int = (MAX_ADVERTISED_TOOLS - bossTermOwnToolNames.size).coerceAtLeast(0)
 
         /**
          * Families in the order the ceiling should keep them, most useful first.
          *
-         * Load-bearing as of the Kubernetes plugin landing — the surface is now ten
-         * tools past [MAX_EXTERNAL_TOOLS] — and it is the difference between
+         * Load-bearing as of the Kubernetes plugin landing — 119 tools are
+         * advertisable against 114 slots — and it is the difference between
          * dropping the tools nobody asks a voice agent for and dropping whichever
          * tools happened to register last. An entry ending in `_` is a prefix;
          * anything else is an exact name. Unlisted families sort last (and every
