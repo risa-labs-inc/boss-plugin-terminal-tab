@@ -201,6 +201,11 @@ dependencies {
     // (ExternalVoiceTool / VoiceToolPolicy) comes along for free.
     testImplementation(kotlin("test"))
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+    // The Compose compiler plugin runs over the test compilation too and refuses to
+    // work without the runtime on the class path, even though no test touches a
+    // composable. Test-scoped only, so it stays out of the plugin JAR (which is
+    // built from runtimeClasspath).
+    testImplementation(compose.runtime)
     if (useLocalDependencies) {
         testImplementation(files("$bossPluginApiPath/build/libs/boss-plugin-api-1.0.55.jar"))
     } else {

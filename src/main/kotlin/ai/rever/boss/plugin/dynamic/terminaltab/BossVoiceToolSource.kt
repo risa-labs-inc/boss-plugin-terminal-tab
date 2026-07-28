@@ -305,11 +305,13 @@ internal object BossVoiceToolSafety {
     /**
      * Tools that hand back credential material, by name.
      *
-     * All seven are already caught by BossTerm's floor pattern. They are listed
-     * anyway, because the floor is a heuristic over a registry BossTerm has never
-     * seen and this file is where the registry is known: if the floor's pattern
-     * ever loosens, or one of these is renamed to something the pattern misses,
-     * the exclusion has to survive that.
+     * All seven are already caught by BossTerm's floor pattern, so deleting this
+     * set changes no observable behaviour and a mutation proving as much survives
+     * on purpose. It stays because the floor is a heuristic over a registry BossTerm
+     * has never seen and this file is where the registry IS known: if that pattern
+     * ever loosens, or one of these is renamed to something it misses, the
+     * exclusion has to survive the change. The cost of keeping it is one set
+     * literal; the cost of being wrong is a credential read out loud.
      *
      * `secret_create` and `secret_delete` are here even though neither *returns* a
      * secret. `secret_create` takes the plaintext as an argument, which means the
