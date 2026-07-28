@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.api.McpToolRegistry
 import ai.rever.boss.plugin.api.RegisteredMcpTool
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
+import ai.rever.bossterm.compose.mcp.BossTermMcpServer
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
@@ -25,16 +26,39 @@ private val dynLogger = BossLogger.forComponent("TerminalTabMcpDynamicTools")
 private val schemaJson = Json { ignoreUnknownKeys = true }
 
 /**
- * Tool names owned by BossTerm's built-ins, its `manage_tools` meta-tool, and
- * this plugin's host-facing tools (see [bossHostMcpTools]). A plugin-contributed
- * tool must never shadow one of these, so the bridge skips them.
+ * Every tool name BossTerm registers on a server of its own, read from BossTerm
+ * instead of restated here.
+ *
+ * `BUILT_IN_READ_TOOLS` and `BUILT_IN_WRITE_TOOLS` are the two registration maps
+ * `createServer` walks; `UNDISABLABLE_TOOLS` is how `manage_tools` — always
+ * registered, and deliberately absent from its own `list` output — becomes
+ * visible. All three are public on `BossTermMcpServer`'s companion, so this is a
+ * read rather than a mirror, and it is a **compile-time** reference: bossterm is
+ * bundled in this plugin's JAR, so the version compiled against is the version
+ * running, and a rename would fail the build rather than silently skew the set.
+ *
+ * A hand-written copy of this list is what was here before, and it had already
+ * drifted: it was missing `close_panel`, which BossTerm has registered as a write
+ * tool for some time. That is what a mirror does. It cost nothing yet only because
+ * no plugin happens to have claimed the name — the bridge would have let it
+ * through to collide with BossTerm's own on the live server.
+ *
+ * Union rather than concatenation so a tool moving between the lists (a read
+ * becoming undisablable, say) cannot double-count.
  */
-internal val RESERVED_TOOL_NAMES: Set<String> = setOf(
-    "list_tabs", "get_active_tab", "list_panes", "read_scrollback",
-    "search_output", "get_last_command", "read_debug_console",
-    "send_input", "send_signal", "run_in_panel", "run_command", "show_image",
-    "manage_tools", "run_in_sidebar", "cli",
-)
+internal val bossTermOwnToolNames: Set<String> = (
+    BossTermMcpServer.BUILT_IN_READ_TOOLS +
+        BossTermMcpServer.BUILT_IN_WRITE_TOOLS +
+        BossTermMcpServer.UNDISABLABLE_TOOLS
+    ).toSet()
+
+/**
+ * Tool names owned by BossTerm ([bossTermOwnToolNames]) and by this plugin's
+ * host-facing tools (see [bossHostMcpTools]). A plugin-contributed tool must never
+ * shadow one of these, so the bridge skips them.
+ */
+internal val RESERVED_TOOL_NAMES: Set<String> =
+    bossTermOwnToolNames + bossHostMcpToolDefs.map { it.name }
 
 /**
  * The single active registry→server sync coroutine. The MCP engine may stop and

@@ -44,7 +44,7 @@ class BossVoiceToolSafetyTest {
         // and roles_list all read things that sound credential-adjacent.
         val kept = LIVE_EXTERNAL_TOOL_NAMES.filterNot { BossVoiceToolSafety.isSecret(it) }
 
-        assertEquals(120, kept.size)
+        assertEquals(119, kept.size)
         listOf("browser_get_url", "prompt_get", "permissions_list", "roles_list", "codebase_read")
             .forEach { assertTrue(it in kept, "$it should stay available") }
     }
@@ -101,8 +101,10 @@ class BossVoiceToolSafetyTest {
             "codebase_write", "editor_write_file",
             // Its own description says "Destructive"; the floor only knows `remove`.
             "docker_rm",
-            // Self-documented as "cannot be undone".
-            "close_panel", "tab_close",
+            // tab_close is a browser tab. BossTerm owns close_panel (see
+            // bossTermOwnToolNames), so the `close` segment earns its place here on
+            // tab_close alone — close_panel never reaches this source.
+            "tab_close",
             "docker_compose_down", "docker_build",
             "flow_run", "run_config_run",
             "evolver_hot_reload", "evolver_create_issue",
@@ -175,12 +177,12 @@ class BossVoiceToolSafetyTest {
             .filterNot { BossVoiceToolSafety.isSecret(it) }
             .filter { BossVoiceToolSafety.isIrreversible(it) }
 
-        // 26 of these are gated only because of this file; the other 11 the floor
+        // 25 of these are gated only because of this file; the other 11 the floor
         // already caught. Pinned as a number so widening either rule has to come
         // with a deliberate edit here rather than sliding in.
-        assertEquals(37, gated.size, "gated tools on the live surface: $gated")
+        assertEquals(36, gated.size, "gated tools on the live surface: $gated")
         assertEquals(
-            26,
+            25,
             gated.count { !VoiceToolPolicy.looksIrreversible(it) },
             "tools gated only by this file's rules",
         )
