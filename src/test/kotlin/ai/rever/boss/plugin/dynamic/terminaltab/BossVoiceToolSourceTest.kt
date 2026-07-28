@@ -277,6 +277,9 @@ class BossVoiceToolSourceTest {
         assertEquals(listOf("cli", "run_in_sidebar"), ordered.take(2))
         assertTrue(ordered.indexOf("git_status") < ordered.indexOf("docker_ps"))
         assertTrue(ordered.indexOf("codebase_read") < ordered.indexOf("flow_run"))
+        // k8s is ranked, not left to fall off the end with the unlisted families.
+        assertTrue(ordered.indexOf("docker_ps") < ordered.indexOf("k8s_pods"))
+        assertTrue(ordered.indexOf("k8s_pods") < ordered.indexOf("flow_run"))
         // RBAC is the last thing advertised: the least plausible thing to do by
         // voice and the worst to mishear, so it is what the ceiling takes first.
         // Measured against what CAN be advertised — the excluded secret tools sort
@@ -314,22 +317,55 @@ class BossVoiceToolSourceTest {
     }
 
     @Test
-    fun `the ceiling is high enough for the measured surface`() {
+    fun `the ceiling keeps the whole advertised surface under the function limit`() {
+        // The invariant the ceiling exists for, and the one that cannot rot: it is
+        // arithmetic against OpenAI's limit rather than against a fixture. An
+        // earlier version of this test asserted "the ceiling is high enough for the
+        // measured surface", which passed for an afternoon and then quietly kept
+        // passing after a Kubernetes plugin pushed the real surface ten tools past
+        // it — asserting a stale snapshot rather than a property.
+        assertTrue(
+            BossVoiceToolSource.MAX_EXTERNAL_TOOLS + BOSSTERM_OWN_TOOL_NAMES.size <= 128,
+            "${BossVoiceToolSource.MAX_EXTERNAL_TOOLS} external + " +
+                "${BOSSTERM_OWN_TOOL_NAMES.size} BossTerm tools would be advertised in one " +
+                "session.update; past 128 functions that is a rejected session, not a slow one.",
+        )
+    }
+
+    @Test
+    fun `when the surface exceeds the ceiling the survivors are the useful families`() {
+        // The live surface IS past the ceiling, so this is the behaviour the user
+        // actually gets rather than a hypothetical. What must hold is that the
+        // casualties are the tail of the priority table, not an arbitrary slice.
         val registry = FakeToolRegistry(
-            LIVE_EXTERNAL_TOOL_NAMES.filterNot { it in setOf("cli", "run_in_sidebar") }.map { toolDef(it) }
+            LIVE_EXTERNAL_TOOL_NAMES.filterNot { it in setOf("cli", "run_in_sidebar") }
+                .shuffled()
+                .map { toolDef(it) }
         )
         val source = source(registry)
 
-        val advertisable = source.tools().filterNot { source.policy.isExcluded(it) }
+        val advertisable = source.tools().filterNot { source.policy.isExcluded(it) }.map { it.name }
+        val overflow = advertisable.size - BossVoiceToolSource.MAX_EXTERNAL_TOOLS
+        assertTrue(overflow > 0, "fixture no longer exceeds the ceiling; this test is now vacuous")
 
-        assertTrue(
-            advertisable.size <= BossVoiceToolSource.MAX_EXTERNAL_TOOLS,
-            "${advertisable.size} advertisable tools against a ceiling of " +
-                "${BossVoiceToolSource.MAX_EXTERNAL_TOOLS}: the ordering is now load-bearing, " +
-                "and tools past the ceiling are dropped silently to the user.",
-        )
-        // Plus BossTerm's own 13, under the 128-function limit the ceiling is set from.
-        assertTrue(BossVoiceToolSource.MAX_EXTERNAL_TOOLS + BOSSTERM_OWN_TOOL_NAMES.size <= 128)
+        val survives = advertisable.take(BossVoiceToolSource.MAX_EXTERNAL_TOOLS)
+        val dropped = advertisable.drop(BossVoiceToolSource.MAX_EXTERNAL_TOOLS)
+
+        // Everything a person plausibly asks for by voice must be on the safe side.
+        listOf(
+            "cli", "run_in_sidebar", "git_status", "git_log", "codebase_read", "codebase_write",
+            "console_tail", "run_config_run", "browser_navigate", "docker_ps", "k8s_pods",
+            "k8s_get", "k8s_apply", "flow_run", "rpa_run", "evolver_evolve", "plugins_list",
+        ).forEach { assertTrue(it in survives, "$it must survive the ceiling") }
+
+        // And the casualties are all RBAC — admin-console work, least plausible by
+        // voice, and BossTerm logs every one of them by name.
+        dropped.forEach {
+            assertTrue(
+                it.startsWith("role") || it.startsWith("user"),
+                "$it was dropped for the ceiling but is not part of the RBAC tail",
+            )
+        }
     }
 
     // ------------------------------------------------------ policy consistency

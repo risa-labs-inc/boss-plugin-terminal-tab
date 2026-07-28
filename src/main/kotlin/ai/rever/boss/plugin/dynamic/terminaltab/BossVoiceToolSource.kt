@@ -196,35 +196,44 @@ internal class BossVoiceToolSource(
          * Ceiling on the advertised external surface, raised from BossTerm's
          * default of 64.
          *
-         * Measured on a live instance: 107 tools reach this source, 7 are excluded
-         * as secret-bearing, and the remaining 100 render to 30,225 bytes of
-         * OpenAI `tools` array (~7.6k tokens) against ~12k for BossTerm's own 13.
-         * At BossTerm's default of 64 the array is 20,008 bytes — it saves ~2.6k
-         * tokens per turn and costs 36 tools, chosen by this file's priority table
-         * rather than by anything the user asked for. For a feature whose whole
-         * point is reaching the `boss` surface, that is the wrong side of the
-         * trade: the missing third is invisible until the agent says "that tool is
-         * not available on this host" for something the user knows they have.
+         * Measured on a live instance, twice, and the second measurement is the
+         * one that settles it. First: 107 tools reached this source, 7 withheld as
+         * secret-bearing, 100 advertisable, rendering to 30,225 bytes of OpenAI
+         * `tools` array (~7.6k tokens) against ~12k for BossTerm's own 13. Then a
+         * Kubernetes plugin was installed and the surface became 127 here — 120
+         * advertisable, 37,120 bytes, ~9.3k tokens. Within one afternoon.
          *
-         * 110 leaves headroom for ~10 newly registered tools before the ordering
-         * starts deciding, and keeps the total advertised surface (110 + BossTerm's
-         * 13 = 123) under the 128-function limit OpenAI documents for function
-         * calling — stated explicitly for Chat Completions, and the Realtime
-         * `tools` array is the same shape, so treating it as the bound is the
-         * conservative reading. Lowering this line back to 64 is the whole change
-         * if the token cost matters more than the coverage.
+         * So the choice is not "64 or everything":
+         *
+         *  - At BossTerm's default of 64 the array is 20,008 bytes. It saves ~2.6k
+         *    tokens a turn and hides 56 of the 120, chosen by this file's priority
+         *    table rather than by anything the user asked for — invisible until
+         *    the agent says "that tool is not available on this host" about
+         *    something the user knows they installed.
+         *  - Advertising all 120 is no longer available. 120 + BossTerm's 13 = 133,
+         *    past the 128-function limit OpenAI documents for function calling
+         *    (stated for Chat Completions; the Realtime `tools` array is the same
+         *    shape, so treating it as the bound is the conservative reading).
+         *
+         * 110 is the largest value that keeps the total (110 + 13 = 123) under that
+         * limit with headroom. The surface has therefore already outgrown what can
+         * be advertised, which makes [FAMILY_PRIORITY] load-bearing today rather
+         * than insurance: the ten tools currently past the ceiling are the tail of
+         * the RBAC family, by design. Lowering this back to 64 is a one-line
+         * change if the token cost outweighs the coverage; raising it above 115
+         * is not a trade, it is a rejected session.
          */
         const val MAX_EXTERNAL_TOOLS = 110
 
         /**
          * Families in the order the ceiling should keep them, most useful first.
          *
-         * Only load-bearing once the surface outgrows [MAX_EXTERNAL_TOOLS] — which
-         * it will, since installing a plugin grows it — but it is the difference
-         * between dropping the tools nobody asks a voice agent for and dropping
-         * whichever tools happened to register last. An entry ending in `_` is a
-         * prefix; anything else is an exact name. Unlisted families sort last (and
-         * every drop is logged by name by the merge).
+         * Load-bearing as of the Kubernetes plugin landing — the surface is now ten
+         * tools past [MAX_EXTERNAL_TOOLS] — and it is the difference between
+         * dropping the tools nobody asks a voice agent for and dropping whichever
+         * tools happened to register last. An entry ending in `_` is a prefix;
+         * anything else is an exact name. Unlisted families sort last (and every
+         * drop is logged by name by the merge).
          *
          * Ranked by what someone talking to their own dev machine actually asks
          * for: drive the app, then version control, then code, then what is on
@@ -241,6 +250,10 @@ internal class BossVoiceToolSource(
             listOf("run_config_"),
             listOf("tab_", "tabs_list", "close_panel", "browser_", "bookmark_", "bookmarks_list"),
             listOf("docker_"),
+            // Same user as docker's, one layer out. Ranked here rather than left
+            // unlisted because unlisted means "first past the ceiling", and for
+            // anyone running a cluster these are the tools they would ask for.
+            listOf("k8s_"),
             listOf("flow_", "rpa_", "llmrpa_"),
             listOf("evolver_"),
             listOf("plugin_", "plugins_list", "prompt_", "performance_"),
@@ -374,16 +387,34 @@ internal object BossVoiceToolSafety {
      *    `user_role_assign` are privilege changes. Each is technically reversible,
      *    and gating them anyway is the cheap side of the trade: one spoken
      *    confirmation against a misheard sentence granting someone a role.
+     *  - `k8s_apply` mutates a live cluster and can replace or remove objects; its
+     *    own description says to try `dry_run` first. `k8s_scale` and
+     *    `k8s_rollout_restart` are reversible in principle and an outage in
+     *    practice, which is not undone by scaling back up.
+     *  - `k8s_use_context` destroys nothing at all, and is here for a reason no
+     *    substring could reach: it changes WHICH CLUSTER every later tool acts on.
+     *    A misheard context name does not fail, it silently re-aims the next
+     *    `k8s_delete` at production. Gating the aiming step is worth more than
+     *    gating any single mutation after it.
      *
      * Left ungated on purpose: `docker_stop` and `rpa_stop` (a matching start
      * exists), `git_cherry_pick` (recoverable with a reset), `plugin_enable`,
      * `browser_navigate` / `tab_open_url` (gating navigation would make the agent
-     * tedious for no loss), and — the deliberate one — `run_in_sidebar` and
-     * `cli`'s `open_terminal`, which run shell commands. BossTerm advertises its
-     * own `run_command` to the same agent ungated; gating this plugin's two while
-     * that stands would be a confirmation dialog in front of the unlocked door
-     * next to it. "Run the tests" is also the single most likely thing anyone says
-     * to this agent.
+     * tedious for no loss), `k8s_port_forward` (reversible by its own stop tool),
+     * `k8s_exec` (it opens a shell in a BOSS tab for the user to type in — the
+     * agent is not the one running commands), and — the deliberate one —
+     * `run_in_sidebar` and `cli`'s `open_terminal`, which run shell commands.
+     * BossTerm advertises its own `run_command` to the same agent ungated; gating
+     * this plugin's two while that stands would be a confirmation dialog in front
+     * of the unlocked door next to it. "Run the tests" is also the single most
+     * likely thing anyone says to this agent.
+     *
+     * Also ungated, and worth stating because it looks like an omission:
+     * `k8s_get`, `k8s_describe` and `k8s_yaml` can be pointed at a Secret object.
+     * Their own author got there first — the descriptions promise that values are
+     * never returned, that describe shows key names only, and that `k8s_yaml`
+     * refuses secrets outright — so these are general-purpose readers in the same
+     * class as `codebase_read`, which is the line this file draws.
      */
     private val IRREVERSIBLE_TOOL_NAMES: Set<String> = setOf(
         "rpa_run",
@@ -400,6 +431,10 @@ internal object BossVoiceToolSafety {
         "role_create",
         "role_grant_permission",
         "user_role_assign",
+        "k8s_apply",
+        "k8s_scale",
+        "k8s_rollout_restart",
+        "k8s_use_context",
     )
 
     /**
