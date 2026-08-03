@@ -1,0 +1,18 @@
+BOSS terminal-tab plugin
+Copyright 2025-2026 Risa Labs Inc.
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+This plugin bundles the following third-party component inside its JAR:
+
+BossTerm (com.risaboss:bossterm-compose) 1.2.143
+  Copyright the BossTerm authors.
+  Dual-licensed: LGPLv3 OR Apache-2.0. Used here under the Apache-2.0
+  option, so no LGPL relinking obligation attaches to this plugin. You may
+  take BossTerm itself under either license.
+  Source: https://github.com/kshivang/BossTerm
+
+BossTerm is bundled privately rather than provided by the host classloader,
+so the version above is the one that actually ships in this plugin's JAR.
+It is set by `bosstermVersion` in build.gradle.kts; update this notice when
+that pin moves.
