@@ -1,6 +1,7 @@
 package ai.rever.boss.plugin.dynamic.terminaltab
 
 import ai.rever.boss.plugin.ui.BossThemeColors
+import ai.rever.bossterm.compose.settings.theme.BuiltinThemes
 import ai.rever.bossterm.compose.settings.theme.ColorPalette
 import ai.rever.bossterm.compose.settings.theme.ColorPaletteManager
 import ai.rever.bossterm.compose.settings.theme.Theme
@@ -12,14 +13,20 @@ import androidx.compose.ui.graphics.luminance
 
 /**
  * Bridges the BOSS host theme into the bundled BossTerm terminal so the terminal
- * re-skins live when the user switches the host theme (Operator / Daylight / Clean).
+ * re-skins live when the user switches the host theme.
  *
  * The host theme system and BossTerm's own theme engine are independent. This
  * composable observes the host's reactive [BossThemeColors] tokens and pushes a
  * matching terminal [Theme] + [ColorPalette] into BossTerm's global
  * [ThemeManager] / [ColorPaletteManager], which recolor every terminal in the
- * process live (no restart). Light vs dark is inferred from the host background
- * luminance, so a light host theme (Daylight) yields a light terminal.
+ * process live (no restart).
+ *
+ * Note that this runs on **every** host theme change and therefore overwrites
+ * whatever terminal theme was previously active — a BossTerm builtin only ever
+ * shows through here if [buildTerminalTheme] chooses it, which is why that
+ * function prefers a bundled builtin over synthesis. Light vs dark for the
+ * synthesized case is inferred from the host background luminance, so a light
+ * host theme yields a light terminal.
  *
  * Strategy A — no BossTerm change/republish: this uses the runtime custom-theme
  * API (`applyTheme` + `applyPalette`) that ships in the bundled bossterm-compose.
@@ -51,9 +58,21 @@ fun ApplyHostThemeToTerminal() {
 private fun hex(c: Color): String = Theme.colorToHex(c)
 
 /**
- * Builds a terminal [Theme] from the active host chrome colors. Brand-significant
- * ANSI slots (red/green/yellow/cyan) are taken from the host status/data tokens;
- * the rest come from a curated light or dark base chosen by background luminance.
+ * Builds a terminal [Theme] from the active host chrome colors.
+ *
+ * A hand-authored bundled builtin always beats synthesis, so the BOSS identities
+ * (BOSS Blueprint, BOSS Operator) get their real ANSI 16 and their exact
+ * [ai.rever.bossterm.compose.settings.theme.UiTheme] chrome instead of a derived
+ * approximation. Matching is on the floor: a host theme and its terminal
+ * counterpart share `ink` by design, and that is the one value both sides commit
+ * to publicly — no host API for "which theme id is active" is reachable from a
+ * plugin, because plugins compile against boss-plugin-api's `ui` mirror, which
+ * has no theme controller in it.
+ *
+ * Unmatched host themes (Daylight, Clean, anything added later) fall through to
+ * synthesis: brand-significant ANSI slots (red/green/yellow/cyan) from the host
+ * status/data tokens, the rest from a curated light or dark base chosen by
+ * background luminance.
  */
 private fun buildTerminalTheme(
     background: Color,
@@ -64,6 +83,9 @@ private fun buildTerminalTheme(
     success: Color,
     warning: Color,
 ): Theme {
+    val floor = hex(background)
+    BuiltinThemes.ALL.firstOrNull { it.background == floor }?.let { return it }
+
     val isLight = background.luminance() > 0.5f
     val selection = accent.copy(alpha = 0.30f)
     return if (isLight) {
