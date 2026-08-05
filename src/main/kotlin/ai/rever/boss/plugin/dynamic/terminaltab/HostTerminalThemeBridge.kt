@@ -1,6 +1,9 @@
 package ai.rever.boss.plugin.dynamic.terminaltab
 
+import ai.rever.boss.plugin.logging.BossLogger
+import ai.rever.boss.plugin.logging.LogCategory
 import ai.rever.boss.plugin.ui.BossThemeColors
+import ai.rever.bossterm.compose.settings.theme.BuiltinThemes
 import ai.rever.bossterm.compose.settings.theme.ColorPalette
 import ai.rever.bossterm.compose.settings.theme.ColorPaletteManager
 import ai.rever.bossterm.compose.settings.theme.Theme
@@ -12,14 +15,20 @@ import androidx.compose.ui.graphics.luminance
 
 /**
  * Bridges the BOSS host theme into the bundled BossTerm terminal so the terminal
- * re-skins live when the user switches the host theme (Operator / Daylight / Clean).
+ * re-skins live when the user switches the host theme.
  *
  * The host theme system and BossTerm's own theme engine are independent. This
  * composable observes the host's reactive [BossThemeColors] tokens and pushes a
  * matching terminal [Theme] + [ColorPalette] into BossTerm's global
  * [ThemeManager] / [ColorPaletteManager], which recolor every terminal in the
- * process live (no restart). Light vs dark is inferred from the host background
- * luminance, so a light host theme (Daylight) yields a light terminal.
+ * process live (no restart).
+ *
+ * Note that this runs on **every** host theme change and therefore overwrites
+ * whatever terminal theme was previously active — a BossTerm builtin only ever
+ * shows through here if [buildTerminalTheme] chooses it, which is why that
+ * function prefers a bundled builtin over synthesis. Light vs dark for the
+ * synthesized case is inferred from the host background luminance, so a light
+ * host theme yields a light terminal.
  *
  * Strategy A — no BossTerm change/republish: this uses the runtime custom-theme
  * API (`applyTheme` + `applyPalette`) that ships in the bundled bossterm-compose.
@@ -41,6 +50,19 @@ fun ApplyHostThemeToTerminal() {
 
     LaunchedEffect(background, foreground, accent, data, error, success, warning) {
         val theme = buildTerminalTheme(background, foreground, accent, data, error, success, warning)
+        // Both ways this can go wrong — a floor that matches nothing, and a floor
+        // that matches the wrong thing — are silent: the terminal just looks
+        // slightly off. One line turns "why does Blueprint look like Operator?"
+        // into a grep.
+        logger.debug(
+            LogCategory.TERMINAL,
+            "Applied host theme to terminal",
+            mapOf(
+                "themeId" to theme.id,
+                "hostFloor" to hex(background),
+                "source" to if (theme.isBuiltin) "curated-builtin" else "synthesized",
+            ),
+        )
         ThemeManager.instance.applyTheme(theme)
         // applyTheme alone leaves the ANSI cache stale; applying the palette
         // invalidates it so the 16 ANSI colors repaint to match.
@@ -48,14 +70,51 @@ fun ApplyHostThemeToTerminal() {
     }
 }
 
+private val logger = BossLogger.forComponent("HostTerminalThemeBridge")
+
 private fun hex(c: Color): String = Theme.colorToHex(c)
 
 /**
- * Builds a terminal [Theme] from the active host chrome colors. Brand-significant
- * ANSI slots (red/green/yellow/cyan) are taken from the host status/data tokens;
- * the rest come from a curated light or dark base chosen by background luminance.
+ * The BOSS builtin whose floor is [floor], or null to synthesize.
+ *
+ * Compared case-insensitively: `colorToHex` emits uppercase today, but this is a
+ * string comparison against values owned by another repo, and case drift there
+ * would disable the whole feature with no signal. (The exact-value risk —
+ * `colorToHex` truncating `(channel * 255).toInt()` — is pinned upstream by
+ * BossTerm's `builtin background hex survives a Color round-trip`.)
  */
-private fun buildTerminalTheme(
+internal fun curatedBossThemeFor(floor: String): Theme? =
+    BuiltinThemes.ALL.firstOrNull {
+        it.id.startsWith("boss-") && it.background.equals(floor, ignoreCase = true)
+    }
+
+/**
+ * Builds a terminal [Theme] from the active host chrome colors.
+ *
+ * A hand-authored **BOSS** builtin beats synthesis, so BOSS Blueprint and BOSS
+ * Operator get their real ANSI 16 and their exact
+ * [ai.rever.bossterm.compose.settings.theme.UiTheme] chrome instead of a derived
+ * approximation. Matching is on the floor: a host theme and its terminal
+ * counterpart share `ink` by design, and that is the one value both sides commit
+ * to publicly — no host API for "which theme id is active" is reachable from a
+ * plugin, because plugins compile against boss-plugin-api's `ui` mirror, which
+ * has no theme controller in it.
+ *
+ * Deliberately restricted to the `boss-` builtins rather than all of
+ * [BuiltinThemes.ALL]. The intent is "a BOSS identity should win", and a floor is
+ * not a unique key: pure white is the likeliest background for any bundled light
+ * theme *and* for a light host theme, so an unrestricted match could silently
+ * adopt a third-party builtin's entire palette and drop every host token — the
+ * failure this function exists to prevent, in the other direction and harder to
+ * spot because it looks deliberate. It would also make behaviour depend on
+ * declaration order in [BuiltinThemes.ALL].
+ *
+ * Unmatched host themes (Daylight, Clean, anything added later) fall through to
+ * synthesis: brand-significant ANSI slots (red/green/yellow/cyan) from the host
+ * status/data tokens, the rest from a curated light or dark base chosen by
+ * background luminance.
+ */
+internal fun buildTerminalTheme(
     background: Color,
     foreground: Color,
     accent: Color,
@@ -64,6 +123,9 @@ private fun buildTerminalTheme(
     success: Color,
     warning: Color,
 ): Theme {
+    val floor = hex(background)
+    curatedBossThemeFor(floor)?.let { return it }
+
     val isLight = background.luminance() > 0.5f
     val selection = accent.copy(alpha = 0.30f)
     return if (isLight) {
@@ -71,7 +133,7 @@ private fun buildTerminalTheme(
             id = "boss-host-light",
             name = "BOSS Host (Light)",
             foreground = hex(foreground),
-            background = hex(background),
+            background = floor,
             cursor = hex(accent),
             cursorText = hex(background),
             selection = hex(selection),
@@ -102,7 +164,7 @@ private fun buildTerminalTheme(
             id = "boss-host-dark",
             name = "BOSS Host (Dark)",
             foreground = hex(foreground),
-            background = hex(background),
+            background = floor,
             cursor = hex(accent),
             cursorText = hex(background),
             selection = hex(selection),

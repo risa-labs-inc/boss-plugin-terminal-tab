@@ -217,6 +217,10 @@ dependencies {
     // composable. Test-scoped only, so it stays out of the plugin JAR (which is
     // built from runtimeClasspath).
     testImplementation(compose.runtime)
+    // ui-graphics for androidx.compose.ui.graphics.Color: the theme-bridge test
+    // constructs host colors, and a transitive dep of an `implementation` dep is
+    // not on the test COMPILE classpath even though it is on the runtime one.
+    testImplementation(compose.ui)
     if (useLocalDependencies) {
         testImplementation(files("$bossPluginApiPath/build/libs/boss-plugin-api-1.0.55.jar"))
     } else {
