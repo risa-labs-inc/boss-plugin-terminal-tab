@@ -44,12 +44,14 @@ fun ApplyHostThemeToTerminal() {
     val foreground = BossThemeColors.TextPrimary
     val accent = BossThemeColors.AccentColor           // signal
     val data = BossThemeColors.SecondaryColor          // links / data
+    val textSecondary = BossThemeColors.TextSecondary  // ANSI 7 on a light floor
     val error = BossThemeColors.ErrorColor
     val success = BossThemeColors.SuccessColor
     val warning = BossThemeColors.WarningColor
 
-    LaunchedEffect(background, foreground, accent, data, error, success, warning) {
-        val theme = buildTerminalTheme(background, foreground, accent, data, error, success, warning)
+    LaunchedEffect(background, foreground, accent, data, error, success, warning, textSecondary) {
+        val theme =
+            buildTerminalTheme(background, foreground, accent, data, error, success, warning, textSecondary)
         // Both ways this can go wrong — a floor that matches nothing, and a floor
         // that matches the wrong thing — are silent: the terminal just looks
         // slightly off. One line turns "why does Blueprint look like Operator?"
@@ -122,6 +124,7 @@ internal fun buildTerminalTheme(
     error: Color,
     success: Color,
     warning: Color,
+    textSecondary: Color,
 ): Theme {
     val floor = hex(background)
     curatedBossThemeFor(floor)?.let { return it }
@@ -148,7 +151,11 @@ internal fun buildTerminalTheme(
             blue = hex(data),
             magenta = "0xFF6F42C1",
             cyan = "0xFF1B7C83",
-            white = "0xFFD1D5DA",
+            // ANSI 7/15 invert on a light floor, the way Solarized Light maps them to
+            // its two darkest inks rather than to greys. This was #D1D5DA - 1.27:1 on
+            // paper, so ESC[37m was invisible. Driven off the host's own secondary text
+            // token so it stays correct for Daylight as well as Blueprint Light.
+            white = hex(textSecondary),
             brightBlack = "0xFF6A737D",
             brightRed = "0xFFCB2431",
             brightGreen = "0xFF22863A",
