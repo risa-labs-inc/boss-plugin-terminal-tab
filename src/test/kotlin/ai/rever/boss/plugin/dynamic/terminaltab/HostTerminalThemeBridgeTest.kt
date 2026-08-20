@@ -3,6 +3,7 @@ package ai.rever.boss.plugin.dynamic.terminaltab
 import ai.rever.bossterm.compose.settings.theme.BuiltinThemes
 import ai.rever.bossterm.compose.settings.theme.Theme
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -82,6 +83,7 @@ class HostTerminalThemeBridgeTest {
             error = Color(0xFFFF5555),
             success = Color(0xFF55CC88),
             warning = Color(0xFFFFCC55),
+            textSecondary = Color(0xFF9AA7BB),
         )
         assertEquals("boss-host-dark", dark.id)
         assertEquals("0xFF101820", dark.background, "synthesis must keep the host floor verbatim")
@@ -95,6 +97,7 @@ class HostTerminalThemeBridgeTest {
             error = Color(0xFFCC2222),
             success = Color(0xFF227744),
             warning = Color(0xFF886600),
+            textSecondary = Color(0xFF687081),
         )
         assertEquals("boss-host-light", light.id)
         assertEquals("0xFFF7F8FA", light.background)
@@ -111,8 +114,49 @@ class HostTerminalThemeBridgeTest {
             error = Color(0xFFF2685F),
             success = Color(0xFF6FD08C),
             warning = Color(0xFFF0B429),
+            textSecondary = Color(0xFF8593A3),
         )
         assertEquals(operator.id, built.id, "the curated builtin must win over synthesis")
         assertEquals(operator.magenta, built.magenta, "and bring its own ANSI 16, not the curated base")
+    }
+
+    @Test
+    fun `every ANSI slot a synthesized light theme emits is readable on its own floor`() {
+        // ANSI 7 used to be a hardcoded #D1D5DA, which is 1.27:1 on the Blueprint Light
+        // floor: ESC[37m was invisible. Sweep the whole palette rather than pinning that
+        // one slot, so the next hardcoded light-grey cannot slip back in unnoticed.
+        val floor = Color(0xFFF5F7FB) // BossBlueprintLightColorScheme.ink
+        val light = buildTerminalTheme(
+            background = floor,
+            foreground = Color(0xFF05070B),
+            accent = Color(0xFF0F5BFF),
+            data = Color(0xFF0C3FBF),
+            error = Color(0xFFD33B4A),
+            success = Color(0xFF1E9E63),
+            warning = Color(0xFFA8710A),
+            textSecondary = Color(0xFF687081),
+        )
+        assertEquals("boss-host-light", light.id, "precondition: this floor must synthesize")
+
+        // 3:1 rather than the 4.5:1 text floor: ANSI red/green/yellow are brand-carrying
+        // status colors taken from the host tokens, and holding them to a body-text floor
+        // would mean overriding the host's own palette. 3:1 is the WCAG floor for
+        // large/bold text and UI components, and is well clear of invisible.
+        for (index in 0..15) {
+            val ansi = light.getAnsiColor(index)
+            val ratio = contrastRatio(ansi, floor)
+            assertTrue(
+                ratio >= 3f,
+                "ANSI $index is ${light.getAnsiColorHex(index)}, only ${"%.2f".format(ratio)}:1 " +
+                    "on the light floor",
+            )
+        }
+    }
+
+    /** WCAG contrast ratio; local to the test so it does not depend on bossterm internals. */
+    private fun contrastRatio(a: Color, b: Color): Float {
+        val la = a.luminance() + 0.05f
+        val lb = b.luminance() + 0.05f
+        return if (la > lb) la / lb else lb / la
     }
 }
