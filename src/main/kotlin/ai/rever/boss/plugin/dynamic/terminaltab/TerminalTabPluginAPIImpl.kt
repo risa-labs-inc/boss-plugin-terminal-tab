@@ -214,8 +214,11 @@ class TerminalTabPluginAPIImpl(
     // PENDING SIDEBAR COMMANDS
     // ============================================================
 
+    // Both of these must stay fully qualified. The delegate is a top-level function in this
+    // same package with the same name, so an unqualified call resolves to the override itself
+    // — members win over top-level functions — and recurses until the stack is gone.
     override fun setPendingSidebarCommand(windowId: String, command: String, workingDirectory: String?, configId: String?) {
-        setPendingSidebarCommand(windowId, command, workingDirectory, configId)
+        ai.rever.boss.plugin.dynamic.terminaltab.setPendingSidebarCommand(windowId, command, workingDirectory, configId)
     }
 
     override fun consumePendingSidebarCommand(windowId: String): PendingSidebarCommand? {
