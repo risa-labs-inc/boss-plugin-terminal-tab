@@ -121,11 +121,48 @@ class HostTerminalThemeBridgeTest {
     }
 
     @Test
+    fun `a BOSS light floor beats synthesis too`() {
+        // The light counterpart of the test above, and the behaviour that retired this
+        // file's old light-synthesis floor: BossTerm 1.2.151 added boss-blueprint-light on
+        // 0xFFF5F7FB, so a host on that floor now gets the curated palette. Asserted rather
+        // than assumed, because the bridge matches ANOTHER repo's string: a renamed id or a
+        // shifted floor upstream would otherwise downgrade this to synthesis in silence.
+        val blueprintLight = BuiltinThemes.ALL.first { it.id == "boss-blueprint-light" }
+        val built = buildTerminalTheme(
+            background = blueprintLight.backgroundColorValue,
+            foreground = Color(0xFF05070B),
+            accent = Color(0xFF0F5BFF),
+            data = Color(0xFF0C3FBF),
+            error = Color(0xFFD33B4A),
+            success = Color(0xFF1E9E63),
+            warning = Color(0xFFA8710A),
+            textSecondary = Color(0xFF687081),
+        )
+        assertEquals(blueprintLight.id, built.id, "the curated light builtin must win over synthesis")
+        assertEquals(
+            blueprintLight.white,
+            built.white,
+            "and bring its own ANSI 7, not the host's secondary-text token",
+        )
+    }
+
+    @Test
     fun `every ANSI slot a synthesized light theme emits is readable on its own floor`() {
         // ANSI 7 used to be a hardcoded #D1D5DA, which is 1.27:1 on the Blueprint Light
         // floor: ESC[37m was invisible. Sweep the whole palette rather than pinning that
         // one slot, so the next hardcoded light-grey cannot slip back in unnoticed.
-        val floor = Color(0xFFF5F7FB) // BossBlueprintLightColorScheme.ink
+        //
+        // The floor is deliberately one no `boss-` builtin claims. It used to be
+        // 0xFFF5F7FB, which boss-blueprint-light took in BossTerm 1.2.151 — from then on
+        // curatedBossThemeFor() answered first and this sweep silently stopped testing
+        // synthesis at all. The guard below turns the next such collision into a failure
+        // that says so, instead of a test that quietly measures the wrong palette.
+        val floor = Color(0xFFFAFBFC)
+        assertNull(
+            curatedBossThemeFor(Theme.colorToHex(floor)),
+            "a boss-* builtin now claims this floor, so the bridge returns it and nothing " +
+                "below exercises synthesis — pick another floor",
+        )
         val light = buildTerminalTheme(
             background = floor,
             foreground = Color(0xFF05070B),
