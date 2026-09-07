@@ -466,6 +466,34 @@ class TerminalTabPluginAPIImpl(
 
     override fun isWindows(): Boolean = isWindows
 
+    /**
+     * Sets BossTerm's `customTitle` rather than `title`.
+     *
+     * `title` is what `TabController.wireCwdTitle` writes on every working-directory change, so a
+     * name written there survives until the next `cd`. `customTitle` is the override that wiring
+     * reads and leaves alone, and it is what the tab strip and the notification title already
+     * prefer - so this is the field a manual rename would set, not a second mechanism beside it.
+     *
+     * A blank title is written through as-is: empty is the "no custom title" value that wiring
+     * already understands, which is what makes clearing a name work without a second call.
+     */
+    override fun renameTab(
+        windowId: String,
+        terminalId: String,
+        tabId: String,
+        title: String,
+    ): Boolean {
+        return try {
+            val state = TabbedTerminalStateRegistry.get(windowId, terminalId) ?: return false
+            val tab = state.getTabById(tabId) ?: return false
+            tab.customTitle.value = title
+            true
+        } catch (e: Exception) {
+            logger.warn(LogCategory.TERMINAL, "Failed to rename terminal tab", error = e)
+            false
+        }
+    }
+
     // ============================================================
     // SPLIT PANE MANAGEMENT (T6)
     // ============================================================
