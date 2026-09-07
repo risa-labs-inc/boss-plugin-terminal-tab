@@ -423,20 +423,46 @@ class TerminalTabPluginAPIImpl(
     // SPLIT PANE MANAGEMENT (T6)
     // ============================================================
 
-    override fun splitVertical(windowId: String, terminalId: String, tabId: String?): String? {
+    override fun splitVertical(windowId: String, terminalId: String, tabId: String?): String? =
+        splitVertical(windowId, terminalId, tabId, initialCommand = null)
+
+    override fun splitHorizontal(windowId: String, terminalId: String, tabId: String?): String? =
+        splitHorizontal(windowId, terminalId, tabId, initialCommand = null)
+
+    /**
+     * The three-argument forms delegate here rather than the other way round, so there is one
+     * body per direction and the no-command case cannot drift from the with-command case.
+     *
+     * [initialCommand] is handed to BossTerm rather than written after the split returns.
+     * `TabController.createSessionForSplit` holds it until the shell signals readiness (OSC 133;A,
+     * or a fallback delay); a caller writing it themselves races the PTY spawn, and the write
+     * reports success while the command is silently dropped.
+     */
+    override fun splitVertical(
+        windowId: String,
+        terminalId: String,
+        tabId: String?,
+        initialCommand: String?,
+    ): String? {
         return try {
             val state = TabbedTerminalStateRegistry.get(windowId, terminalId) ?: return null
-            state.splitVertical(tabId)
+            state.splitVertical(tabId, initialCommand = initialCommand?.ifBlank { null })
         } catch (e: Exception) {
             logger.warn(LogCategory.TERMINAL, "Failed to split vertical", error = e)
             null
         }
     }
 
-    override fun splitHorizontal(windowId: String, terminalId: String, tabId: String?): String? {
+    /** See [splitVertical] with the same arity. */
+    override fun splitHorizontal(
+        windowId: String,
+        terminalId: String,
+        tabId: String?,
+        initialCommand: String?,
+    ): String? {
         return try {
             val state = TabbedTerminalStateRegistry.get(windowId, terminalId) ?: return null
-            state.splitHorizontal(tabId)
+            state.splitHorizontal(tabId, initialCommand = initialCommand?.ifBlank { null })
         } catch (e: Exception) {
             logger.warn(LogCategory.TERMINAL, "Failed to split horizontal", error = e)
             null
