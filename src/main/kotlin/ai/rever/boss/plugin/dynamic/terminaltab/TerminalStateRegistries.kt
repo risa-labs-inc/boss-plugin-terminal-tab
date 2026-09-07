@@ -2,6 +2,11 @@ package ai.rever.boss.plugin.dynamic.terminaltab
 
 import ai.rever.boss.plugin.api.PendingSidebarCommand
 import ai.rever.boss.plugin.api.SIDEBAR_TERMINAL_ID
+import ai.rever.boss.plugin.api.TerminalTabActivity
+import ai.rever.bossterm.compose.blocks.BlockState
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
 import ai.rever.bossterm.compose.EmbeddableTerminalState
@@ -89,6 +94,72 @@ object TabbedTerminalStateRegistry {
         val commandWithEnter = "$command\n"
         state.sendInput(commandWithEnter.toByteArray(Charsets.UTF_8))
         return true
+    }
+
+    /**
+     * Write a command to ONE tab, rather than to whichever is active.
+     *
+     * BossTerm's `sendInput(bytes, tabId)` returns whether the tab was found, so unlike the
+     * active-tab form above this can report a miss instead of writing somewhere unintended. That
+     * is the point of it: a consumer targeting a tab it owns had to `switchToTab` first, and a
+     * failed switch put the write in whatever tab the user was looking at.
+     */
+    fun runCommandInTab(windowId: String, terminalId: String, command: String, tabId: String): Boolean {
+        val state = states[key(windowId, terminalId)] ?: return false
+        return state.sendInput("$command\n".toByteArray(Charsets.UTF_8), tabId)
+    }
+
+    /** Interrupt ONE tab. See [runCommandInTab]; a stray Ctrl-C is the sharper version of the same risk. */
+    fun sendCtrlCToTab(windowId: String, terminalId: String, tabId: String): Boolean {
+        val state = states[key(windowId, terminalId)] ?: return false
+        return state.sendInput(byteArrayOf(0x03), tabId)
+    }
+
+    /**
+     * Whether the shell in a tab is free to receive a command.
+     *
+     * Read from BossTerm's command blocks, which are driven by OSC 133 shell integration:
+     * `onCommandStarted` opens a block in [BlockState.RUNNING] and `onCommandFinished` closes it.
+     * So the last block being RUNNING is a foreground process, precisely rather than by timing.
+     *
+     * `hasSeenPrompt` is the gate and the reason this is three-valued. Until the shell has emitted
+     * a prompt marker there are no blocks to read, and "no blocks" cannot be told apart from "no
+     * shell integration on this machine at all". Answering IDLE there would send commands into
+     * running processes on every shell without integration, which is the bug this is meant to fix.
+     */
+    /**
+     * [tabActivity] as a stream, mapped off BossTerm's own command-block StateFlow.
+     *
+     * `hasSeenPrompt` is re-read on every emission rather than observed, because it is a plain
+     * flag with no flow behind it. In practice the two move together - the prompt marker that sets
+     * it is also what opens and closes blocks - but it means a tab that gains shell integration
+     * without any block changing would keep reporting UNKNOWN until the next command. Stated here
+     * rather than papered over with a poll.
+     */
+    fun tabActivityFlow(windowId: String, terminalId: String, tabId: String?): Flow<TerminalTabActivity> {
+        val state = states[key(windowId, terminalId)] ?: return flowOf(TerminalTabActivity.UNKNOWN)
+        val tab = (if (tabId != null) state.getTabById(tabId) else state.activeTab)
+            ?: return flowOf(TerminalTabActivity.UNKNOWN)
+        val tracker = tab.commandBlockTracker ?: return flowOf(TerminalTabActivity.UNKNOWN)
+
+        return tracker.blocks.map { blocks ->
+            when {
+                !tracker.hasSeenPrompt -> TerminalTabActivity.UNKNOWN
+                blocks.lastOrNull()?.state == BlockState.RUNNING -> TerminalTabActivity.BUSY
+                else -> TerminalTabActivity.IDLE
+            }
+        }
+    }
+
+    fun tabActivity(windowId: String, terminalId: String, tabId: String?): TerminalTabActivity {
+        val state = states[key(windowId, terminalId)] ?: return TerminalTabActivity.UNKNOWN
+        val tab = (if (tabId != null) state.getTabById(tabId) else state.activeTab) ?: return TerminalTabActivity.UNKNOWN
+        val tracker = tab.commandBlockTracker ?: return TerminalTabActivity.UNKNOWN
+        if (!tracker.hasSeenPrompt) return TerminalTabActivity.UNKNOWN
+
+        // A prompt has been seen and nothing has run yet: genuinely idle, not unknown.
+        val last = tracker.blocks.value.lastOrNull() ?: return TerminalTabActivity.IDLE
+        return if (last.state == BlockState.RUNNING) TerminalTabActivity.BUSY else TerminalTabActivity.IDLE
     }
 
     // Track (windowId, configId) → stable tabId for sidebar terminal tabs

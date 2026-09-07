@@ -224,6 +224,14 @@ dependencies {
     // runtime — only one Window owner per JVM).
     implementation("com.risaboss:bossterm-compose:$bosstermVersion")
 
+    // bossterm-core, for the command-block types `tabActivity` reads. It is already on the
+    // runtime classpath and already bundled into the plugin jar (the filter below matches
+    // "bossterm-core"), but a transitive dependency of an `implementation` dependency is not on
+    // the COMPILE classpath - the same reason `compose.ui` is repeated for tests further down.
+    // Without it, naming `CommandBlockTracker` fails on its supertype `CommandStateListener`.
+    // compileOnly, so nothing is added to the jar that is not already there.
+    compileOnly("com.risaboss:bossterm-core-jvm:$bosstermVersion")
+
     // Compose dependencies — compileOnly so we don't duplicate the host's
     // Compose runtime in the plugin JAR. The plugin's @Composable functions
     // run inside the host's Compose runtime via classloader parent delegation.
