@@ -7,6 +7,7 @@ import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import io.modelcontextprotocol.kotlin.sdk.types.ToolSchema
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.booleanOrNull
@@ -390,16 +391,31 @@ private fun registerSidebarRunWithRunner(
 // MCP arg / result helpers (mcp-sdk 0.8.3 shapes)
 // ---------------------------------------------------------------------------
 
+/**
+ * Read [key] as a string, or null when it is absent, JSON null, or not a primitive at all.
+ *
+ * The `as?` is what keeps this from throwing. `JsonElement.jsonPrimitive` raises
+ * `IllegalArgumentException` on a `JsonObject` or `JsonArray`, and nothing between the transport
+ * and here catches it, so a wrongly SHAPED argument used to throw out of the handler and past the
+ * guarantee [bossHostMcpToolDefs] makes about degrading to an error result.
+ *
+ * These arguments come from a model, which is what makes the shape worth defending against and
+ * not just the type: `{"command": {"value": "ls"}}` and `{"panel_id": ["codebase"]}` are what an
+ * over-structured tool call looks like, and both parse as valid JSON.
+ *
+ * A primitive of the wrong TYPE is still read rather than rejected - see [bool] - so a model
+ * sending `"true"` for a flag keeps working.
+ */
 private fun JsonObject?.str(key: String): String? {
-    val el = this?.get(key) ?: return null
-    if (el is JsonNull) return null
-    return el.jsonPrimitive.content
+    val prim = this?.get(key) as? JsonPrimitive ?: return null
+    if (prim is JsonNull) return null
+    return prim.content
 }
 
+/** Read [key] as a boolean, accepting `"true"`/`"false"` as strings. See [str] for the `as?`. */
 private fun JsonObject?.bool(key: String): Boolean? {
-    val el = this?.get(key) ?: return null
-    if (el is JsonNull) return null
-    val prim = el.jsonPrimitive
+    val prim = this?.get(key) as? JsonPrimitive ?: return null
+    if (prim is JsonNull) return null
     return prim.booleanOrNull ?: prim.content.toBooleanStrictOrNull()
 }
 
