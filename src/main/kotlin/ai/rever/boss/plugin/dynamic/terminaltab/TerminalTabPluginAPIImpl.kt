@@ -4,8 +4,11 @@ import ai.rever.boss.plugin.api.PendingSidebarCommand
 import ai.rever.boss.plugin.api.PluginContext
 import ai.rever.boss.plugin.api.TerminalSessionEvent
 import ai.rever.boss.plugin.api.TerminalSessionEventType
+import ai.rever.boss.plugin.api.TerminalTabActivity
 import ai.rever.boss.plugin.api.TerminalTabInfo
 import ai.rever.boss.plugin.api.TerminalTabPluginAPI
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
 import ai.rever.bossterm.compose.mcp.LocalBossTermMcpConfig
@@ -170,6 +173,50 @@ class TerminalTabPluginAPIImpl(
 
     override fun sendInterrupt(windowId: String, terminalId: String): Boolean {
         return TabbedTerminalStateRegistry.sendCtrlC(windowId, terminalId)
+    }
+
+    /**
+     * A null [tabId] means the active tab, so this is a superset of the three-argument form rather
+     * than a second mechanism, and the two cannot drift.
+     */
+    override fun sendCommand(windowId: String, terminalId: String, command: String, tabId: String?): Boolean {
+        return if (tabId == null) {
+            sendCommand(windowId, terminalId, command)
+        } else {
+            TabbedTerminalStateRegistry.runCommandInTab(windowId, terminalId, command, tabId)
+        }
+    }
+
+    /** See the [sendCommand] overload above. */
+    override fun sendInterrupt(windowId: String, terminalId: String, tabId: String?): Boolean {
+        return if (tabId == null) {
+            sendInterrupt(windowId, terminalId)
+        } else {
+            TabbedTerminalStateRegistry.sendCtrlCToTab(windowId, terminalId, tabId)
+        }
+    }
+
+    override fun tabActivityFlow(
+        windowId: String,
+        terminalId: String,
+        tabId: String?,
+    ): Flow<TerminalTabActivity> {
+        return try {
+            TabbedTerminalStateRegistry.tabActivityFlow(windowId, terminalId, tabId)
+        } catch (e: Exception) {
+            logger.warn(LogCategory.TERMINAL, "Failed to observe terminal tab activity", error = e)
+            flowOf(TerminalTabActivity.UNKNOWN)
+        }
+    }
+
+    override fun tabActivity(windowId: String, terminalId: String, tabId: String?): TerminalTabActivity {
+        return try {
+            TabbedTerminalStateRegistry.tabActivity(windowId, terminalId, tabId)
+        } catch (e: Exception) {
+            // UNKNOWN, not IDLE: a caller must not be told a tab is free because we failed to look.
+            logger.warn(LogCategory.TERMINAL, "Failed to read terminal tab activity", error = e)
+            TerminalTabActivity.UNKNOWN
+        }
     }
 
     override fun sendInput(windowId: String, terminalId: String, bytes: ByteArray): Boolean {
