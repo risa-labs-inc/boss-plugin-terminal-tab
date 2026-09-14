@@ -26,7 +26,9 @@ class PluginManifestTest {
             val file = File(root, ".github/workflows/$workflow")
             assertTrue(file.isFile, "Required API workflow is missing: $file")
             val text = file.readText()
-            val pins = Regex("(?m)^\\s*$key: ['\"]?([0-9]+\\.[0-9]+\\.[0-9]+)['\"]?\\s*$").findAll(text).map { it.groupValues[1] }.toList()
+            val pins = Regex("(?m)^\\s*$key:([^\\r\\n]*)$").findAll(text).map {
+                it.groupValues[1].substringBefore('#').trim().removeSurrounding("\"").removeSurrounding("'")
+            }.toList()
             assertEquals(listOf(compiled), pins, "$workflow must compile against the declared API gate")
         }
     }
