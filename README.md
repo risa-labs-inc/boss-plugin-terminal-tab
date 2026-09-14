@@ -33,28 +33,26 @@ Or install via Plugin Store in BOSS Console.
 
 The plugin JAR will be created in `build/libs/`.
 
-## License
-
-Licensed under the [Apache License, Version 2.0](LICENSE).
-
-Copyright 2025-2026 Risa Labs Inc.
-
-### API compatibility gate
+## API compatibility gate
 
 The manifest requires Plugin API 1.0.88. Release CI, test CI, and the local
 compile/test classpaths pin that same version; `PluginManifestTest` checks the
 processed manifest against all three pins. Update them together when adopting
 new host API symbols: change `bossPluginApiVersion` in `build.gradle.kts`,
 `boss_plugin_api_version` in `.github/workflows/build.yml`, `API_VERSION` in
-`.github/workflows/test.yml`, and both API fields in `plugin.json`. We deliberately compile against the minimum supported
-API, so using a newer symbol requires an explicit gate update.
+`.github/workflows/test.yml`, and both API fields in `plugin.json`. We deliberately compile against the
+minimum supported API, so using a newer symbol requires an explicit gate update.
 
 This gate protects hosts that report their installed API version. Hosts with an
 unknown API version fail open in both the updater and loader, so the manifest
 alone does not protect those hosts. `minBossVersion` remains 9.2.20.
 
-Publishing this manifest does not repair existing store records. Versions
-2.5.72–2.5.74 need their store `min_api_version` backfilled to 1.0.88. Before
-relying on 2.5.71 as a fallback, verify its store gate against the API that
-release actually requires. Store data and availability of a shipped compatible
-host must be verified separately from this repository's build.
+Publishing a manifest does not repair existing store records. Verify the API
+gate on previously published versions, including any version used as a fallback.
+Store data must be verified separately from this repository's build.
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
+
+Copyright 2025-2026 Risa Labs Inc.

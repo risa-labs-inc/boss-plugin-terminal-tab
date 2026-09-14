@@ -278,6 +278,10 @@ dependencies {
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+    inputs.files(".github/workflows/build.yml", ".github/workflows/test.yml")
+        .withPropertyName("apiPinWorkflows")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    systemProperty("pluginVersion", version.toString())
     systemProperty("bossPluginApiVersion", bossPluginApiVersion)
     systemProperty("pluginProjectDir", projectDir.absolutePath)
 }
