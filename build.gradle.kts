@@ -127,7 +127,9 @@ kotlin {
 // Auto-detect CI environment
 val useLocalDependencies = System.getenv("CI") != "true"
 val bossPluginApiPath = "../boss-plugin-api"
-// Keep the build and both workflow pins aligned with the manifest gate.
+// 1.0.88 is required by renameTab, tabActivityFlow, and initialCommand split overloads.
+// Compile against the minimum supported API so newer symbols cannot silently
+// bypass the gate. Keep both workflow pins aligned with this version.
 val bossPluginApiVersion = "1.0.88"
 
 // BossTerm version is now private to this plugin. Bumping bossterm only
@@ -295,9 +297,6 @@ tasks.register<Jar>("buildPluginJar") {
 
     // Include compiled classes
     from(sourceSets.main.get().output)
-
-    // Include plugin manifest
-    from("src/main/resources")
 
     // Bundle bossterm-compose + its transitive native-access deps (bossterm-core,
     // pty4j, JNA, ICU4J, purejavacomm). Compose Multiplatform / decompose /

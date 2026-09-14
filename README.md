@@ -13,8 +13,8 @@ A dynamic plugin that provides terminal tabs in the main panel area of BOSS Cons
 
 ## Requirements
 
-- BOSS Console 9.2.20 or later
-- Plugin API 1.0.88 or later
+- A BOSS Console host shipping Plugin API 1.0.88 or later
+  (`minBossVersion` also requires BOSS Console 9.2.20 or later).
 
 ## Installation
 
@@ -44,7 +44,8 @@ Copyright 2025-2026 Risa Labs Inc.
 The manifest requires Plugin API 1.0.88. Release CI, test CI, and the local
 compile/test classpaths pin that same version; `PluginManifestTest` checks the
 processed manifest against all three pins. Update them together when adopting
-new host API symbols.
+new host API symbols. We deliberately compile against the minimum supported
+API, so using a newer symbol requires an explicit gate update.
 
 This gate protects hosts that report their installed API version. Hosts with an
 unknown API version fail open in both the updater and loader, so the manifest

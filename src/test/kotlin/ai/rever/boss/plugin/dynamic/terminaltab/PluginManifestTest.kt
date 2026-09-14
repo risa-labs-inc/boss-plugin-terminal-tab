@@ -16,15 +16,15 @@ class PluginManifestTest {
         val manifest = Json.parseToJsonElement(resource.readText()).jsonObject
         val minimum = assertNotNull(manifest["minApiVersion"]).jsonPrimitive.content
         assertTrue(minimum.isNotBlank(), "A missing gate offers the plugin to incompatible hosts")
-        val compiled = System.getProperty("bossPluginApiVersion")
+        val compiled = assertNotNull(System.getProperty("bossPluginApiVersion"), "Run this test via Gradle")
         assertEquals(compiled, minimum)
         // Equality also guarantees minApiVersion <= apiVersion.
         assertEquals(compiled, manifest["apiVersion"]?.jsonPrimitive?.content)
 
-        val root = File(System.getProperty("pluginProjectDir"))
+        val root = File(assertNotNull(System.getProperty("pluginProjectDir"), "Run this test via Gradle"))
         for ((workflow, key) in listOf("build.yml" to "boss_plugin_api_version", "test.yml" to "API_VERSION")) {
             val text = File(root, ".github/workflows/$workflow").readText()
-            val pin = Regex("(?m)^\\s*$key: ['\"]([^'\"]+)['\"]\\s*$").find(text)?.groupValues?.get(1)
+            val pin = Regex("(?m)^\\s*$key: ['\"]?([0-9]+\\.[0-9]+\\.[0-9]+)['\"]?\\s*$").find(text)?.groupValues?.get(1)
             assertEquals(compiled, pin, "$workflow must compile against the declared API gate")
         }
     }
