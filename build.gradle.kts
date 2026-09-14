@@ -127,6 +127,8 @@ kotlin {
 // Auto-detect CI environment
 val useLocalDependencies = System.getenv("CI") != "true"
 val bossPluginApiPath = "../boss-plugin-api"
+// Keep the build and both workflow pins aligned with the manifest gate.
+val bossPluginApiVersion = "1.0.88"
 
 // BossTerm version is now private to this plugin. Bumping bossterm only
 // requires re-releasing this plugin, not BossConsole.
@@ -211,7 +213,7 @@ repositories {
 dependencies {
     if (useLocalDependencies) {
         // Local development: use boss-plugin-api JAR from sibling repo
-        compileOnly(files("$bossPluginApiPath/build/libs/boss-plugin-api-1.0.55.jar"))
+        compileOnly(files("$bossPluginApiPath/build/libs/boss-plugin-api-$bossPluginApiVersion.jar"))
     } else {
         // CI: use downloaded JAR
         compileOnly(files("build/downloaded-deps/boss-plugin-api.jar"))
@@ -266,7 +268,7 @@ dependencies {
     // not on the test COMPILE classpath even though it is on the runtime one.
     testImplementation(compose.ui)
     if (useLocalDependencies) {
-        testImplementation(files("$bossPluginApiPath/build/libs/boss-plugin-api-1.0.55.jar"))
+        testImplementation(files("$bossPluginApiPath/build/libs/boss-plugin-api-$bossPluginApiVersion.jar"))
     } else {
         testImplementation(files("build/downloaded-deps/boss-plugin-api.jar"))
     }
@@ -274,6 +276,8 @@ dependencies {
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+    systemProperty("bossPluginApiVersion", bossPluginApiVersion)
+    systemProperty("pluginProjectDir", projectDir.absolutePath)
 }
 
 // Task to build plugin JAR with compiled classes + bossterm-compose bundled.
