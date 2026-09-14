@@ -23,9 +23,11 @@ class PluginManifestTest {
 
         val root = File(assertNotNull(System.getProperty("pluginProjectDir"), "Run this test via Gradle"))
         for ((workflow, key) in listOf("build.yml" to "boss_plugin_api_version", "test.yml" to "API_VERSION")) {
-            val text = File(root, ".github/workflows/$workflow").readText()
-            val pin = Regex("(?m)^\\s*$key: ['\"]?([0-9]+\\.[0-9]+\\.[0-9]+)['\"]?\\s*$").find(text)?.groupValues?.get(1)
-            assertEquals(compiled, pin, "$workflow must compile against the declared API gate")
+            val file = File(root, ".github/workflows/$workflow")
+            assertTrue(file.isFile, "Required API workflow is missing: $file")
+            val text = file.readText()
+            val pins = Regex("(?m)^\\s*$key: ['\"]?([0-9]+\\.[0-9]+\\.[0-9]+)['\"]?\\s*$").findAll(text).map { it.groupValues[1] }.toList()
+            assertEquals(listOf(compiled), pins, "$workflow must compile against the declared API gate")
         }
     }
 }

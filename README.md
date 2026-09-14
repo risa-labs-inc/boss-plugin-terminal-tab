@@ -44,7 +44,9 @@ Copyright 2025-2026 Risa Labs Inc.
 The manifest requires Plugin API 1.0.88. Release CI, test CI, and the local
 compile/test classpaths pin that same version; `PluginManifestTest` checks the
 processed manifest against all three pins. Update them together when adopting
-new host API symbols. We deliberately compile against the minimum supported
+new host API symbols: change `bossPluginApiVersion` in `build.gradle.kts`,
+`boss_plugin_api_version` in `.github/workflows/build.yml`, `API_VERSION` in
+`.github/workflows/test.yml`, and both API fields in `plugin.json`. We deliberately compile against the minimum supported
 API, so using a newer symbol requires an explicit gate update.
 
 This gate protects hosts that report their installed API version. Hosts with an
