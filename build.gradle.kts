@@ -127,6 +127,10 @@ kotlin {
 // Auto-detect CI environment
 val useLocalDependencies = System.getenv("CI") != "true"
 val bossPluginApiPath = "../boss-plugin-api"
+// 1.0.88 is required by renameTab, tabActivityFlow, and initialCommand split overloads.
+// Compile against the minimum supported API so newer symbols cannot silently
+// bypass the gate. Keep both workflow pins aligned with this version.
+val bossPluginApiVersion = "1.0.88"
 
 // BossTerm version is now private to this plugin. Bumping bossterm only
 // requires re-releasing this plugin, not BossConsole.
@@ -211,7 +215,7 @@ repositories {
 dependencies {
     if (useLocalDependencies) {
         // Local development: use boss-plugin-api JAR from sibling repo
-        compileOnly(files("$bossPluginApiPath/build/libs/boss-plugin-api-1.0.55.jar"))
+        compileOnly(files("$bossPluginApiPath/build/libs/boss-plugin-api-$bossPluginApiVersion.jar"))
     } else {
         // CI: use downloaded JAR
         compileOnly(files("build/downloaded-deps/boss-plugin-api.jar"))
@@ -266,7 +270,7 @@ dependencies {
     // not on the test COMPILE classpath even though it is on the runtime one.
     testImplementation(compose.ui)
     if (useLocalDependencies) {
-        testImplementation(files("$bossPluginApiPath/build/libs/boss-plugin-api-1.0.55.jar"))
+        testImplementation(files("$bossPluginApiPath/build/libs/boss-plugin-api-$bossPluginApiVersion.jar"))
     } else {
         testImplementation(files("build/downloaded-deps/boss-plugin-api.jar"))
     }
@@ -274,6 +278,12 @@ dependencies {
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+    inputs.files(".github/workflows/build.yml", ".github/workflows/test.yml")
+        .withPropertyName("apiPinWorkflows")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    systemProperty("pluginVersion", version.toString())
+    systemProperty("bossPluginApiVersion", bossPluginApiVersion)
+    systemProperty("pluginProjectDir", projectDir.absolutePath)
 }
 
 // Task to build plugin JAR with compiled classes + bossterm-compose bundled.
@@ -291,9 +301,6 @@ tasks.register<Jar>("buildPluginJar") {
 
     // Include compiled classes
     from(sourceSets.main.get().output)
-
-    // Include plugin manifest
-    from("src/main/resources")
 
     // Bundle bossterm-compose + its transitive native-access deps (bossterm-core,
     // pty4j, JNA, ICU4J, purejavacomm). Compose Multiplatform / decompose /
