@@ -22,7 +22,7 @@ From `boss-plugins/terminal-tab`:
 ./gradlew test buildPluginJar
 ```
 
-`test` runs the controller, install-plan, status, and routing tests. `buildPluginJar` creates the installable bundled JAR; its final guard checks that BOSS Term, PTY4J, and JNA runtime classes are present. The ordinary `jar` task intentionally produces a thin diagnostic artifact.
+`test` runs the controller, install-plan, status, and routing tests. `buildPluginJar` creates the installable bundled JAR; its final guard checks that BOSS Term, PTY4J, and JNA runtime classes are present. The ordinary `jar` task intentionally produces a thin diagnostic artifact under `build/diagnostic-libs`, outside the release upload glob.
 
 ## Quick manual check
 

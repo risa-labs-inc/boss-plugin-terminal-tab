@@ -59,6 +59,21 @@ private fun nonFatalInstall(displayName: String, command: String, isWindows: Boo
     return "{ $command; } || $FAILED_INSTALLS_VAR=\"\$$FAILED_INSTALLS_VAR '$safeName'\""
 }
 
+internal fun windowsPromptActivationCommand(
+    marker: String,
+    activation: String,
+    displayName: String,
+    profileExpression: String = "\$PROFILE.CurrentUserCurrentHost",
+): String =
+    "\$profilePath = $profileExpression; " +
+        "\$profileDirectory = Split-Path \$profilePath; " +
+        "if (!(Test-Path \$profileDirectory)) { " +
+        "New-Item -ItemType Directory -Path \$profileDirectory -Force | Out-Null }; " +
+        "if (!(Test-Path \$profilePath)) { New-Item -ItemType File -Path \$profilePath -Force | Out-Null }; " +
+        "if (!(Select-String -Path \$profilePath -Pattern '$marker' -Quiet -ErrorAction SilentlyContinue)) { " +
+        "Add-Content -Path \$profilePath -Value '$activation' }; " +
+        "Write-Host '$displayName configured for PowerShell'"
+
 private fun buildInstallCommandInternal(
     selections: OnboardingSelections,
     installed: InstalledTools,
@@ -165,17 +180,6 @@ private fun buildInstallCommandInternal(
                             userCommands.add(getWindowsUninstall("JanDeDobbeleer.OhMyPosh", "oh-my-posh"))
                         }
                         userCommands.add(getWindowsInstall("Starship.Starship", "starship"))
-                        // Configure PowerShell profile
-                        postInstallCommands.add(
-                            "\$profilePath = \$PROFILE.CurrentUserCurrentHost; " +
-                                "\$profileDirectory = Split-Path \$profilePath; " +
-                                "if (!(Test-Path \$profileDirectory)) { " +
-                                "New-Item -ItemType Directory -Path \$profileDirectory -Force | Out-Null }; " +
-                                "if (!(Test-Path \$profilePath)) { New-Item -ItemType File -Path \$profilePath -Force | Out-Null }; " +
-                                "if (!(Select-String -Path \$profilePath -Pattern 'starship init' -Quiet -ErrorAction SilentlyContinue)) { " +
-                                "Add-Content -Path \$profilePath -Value 'Invoke-Expression (&starship init powershell)' }; " +
-                                "Write-Host 'Starship configured for PowerShell'"
-                        )
                     } else {
                         // Unix: Uninstall Oh My Zsh and Prezto first (they conflict with Starship on Zsh)
                         if (installed.ohMyZsh) {
@@ -212,17 +216,6 @@ private fun buildInstallCommandInternal(
                         userCommands.add(getWindowsUninstall("Starship.Starship", "starship"))
                     }
                     userCommands.add(getWindowsInstall("JanDeDobbeleer.OhMyPosh", "oh-my-posh"))
-                    // Configure PowerShell profile
-                    postInstallCommands.add(
-                        "\$profilePath = \$PROFILE.CurrentUserCurrentHost; " +
-                            "\$profileDirectory = Split-Path \$profilePath; " +
-                            "if (!(Test-Path \$profileDirectory)) { " +
-                            "New-Item -ItemType Directory -Path \$profileDirectory -Force | Out-Null }; " +
-                            "if (!(Test-Path \$profilePath)) { New-Item -ItemType File -Path \$profilePath -Force | Out-Null }; " +
-                            "if (!(Select-String -Path \$profilePath -Pattern 'oh-my-posh' -Quiet -ErrorAction SilentlyContinue)) { " +
-                            "Add-Content -Path \$profilePath -Value 'oh-my-posh init pwsh | Invoke-Expression' }; " +
-                            "Write-Host 'Oh My Posh configured for PowerShell'"
-                    )
                 }
                 ShellCustomizationChoice.OH_MY_ZSH -> {
                     // Unix only: Uninstall Prezto and Starship first
@@ -251,6 +244,25 @@ private fun buildInstallCommandInternal(
                     )
                 }
                 else -> {}
+            }
+        }
+        if (isWindows) {
+            when (selections.shellCustomization) {
+                ShellCustomizationChoice.STARSHIP -> postInstallCommands.add(
+                    windowsPromptActivationCommand(
+                        marker = "starship init",
+                        activation = "Invoke-Expression (&starship init powershell)",
+                        displayName = "Starship",
+                    ),
+                )
+                ShellCustomizationChoice.OH_MY_POSH -> postInstallCommands.add(
+                    windowsPromptActivationCommand(
+                        marker = "oh-my-posh",
+                        activation = "oh-my-posh init pwsh | Invoke-Expression",
+                        displayName = "Oh My Posh",
+                    ),
+                )
+                else -> Unit
             }
         }
     }

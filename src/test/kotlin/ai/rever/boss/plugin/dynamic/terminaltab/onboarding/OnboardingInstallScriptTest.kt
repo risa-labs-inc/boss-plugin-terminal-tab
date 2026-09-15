@@ -122,6 +122,73 @@ class OnboardingInstallScriptTest {
     }
 
     @Test
+    fun `installed Windows prompt tools still configure the active profile`() {
+        val starship = buildInstallCommand(
+            OnboardingSelections(
+                shellCustomization = ShellCustomizationChoice.STARSHIP,
+                installGit = false,
+                installGitHubCLI = false,
+                aiAssistants = emptySet(),
+            ),
+            InstalledTools(starship = true, winget = true),
+            TargetOs.WINDOWS,
+        )
+        assertTrue(starship.contains("\$PROFILE.CurrentUserCurrentHost"), starship)
+        assertTrue(starship.contains("Invoke-Expression (&starship init powershell)"), starship)
+        assertFalse(starship.contains("winget install Starship.Starship"), starship)
+
+        val ohMyPosh = buildInstallCommand(
+            OnboardingSelections(
+                shellCustomization = ShellCustomizationChoice.OH_MY_POSH,
+                installGit = false,
+                installGitHubCLI = false,
+                aiAssistants = emptySet(),
+            ),
+            InstalledTools(ohMyPosh = true, winget = true),
+            TargetOs.WINDOWS,
+        )
+        assertTrue(ohMyPosh.contains("\$PROFILE.CurrentUserCurrentHost"), ohMyPosh)
+        assertTrue(ohMyPosh.contains("oh-my-posh init pwsh | Invoke-Expression"), ohMyPosh)
+        assertFalse(ohMyPosh.contains("winget install JanDeDobbeleer.OhMyPosh"), ohMyPosh)
+    }
+
+    @Test
+    fun `PowerShell prompt activation is idempotent in a temporary profile`() {
+        if (!isWindows) return
+        val profile = File.createTempFile("onboarding-profile", ".ps1")
+        try {
+            profile.writeText("")
+            val profileExpression = "'${profile.absolutePath.replace("'", "''")}'"
+            val activation = windowsPromptActivationCommand(
+                marker = "boss-test-activation",
+                activation = "boss-test-activation",
+                displayName = "Test prompt",
+                profileExpression = profileExpression,
+            )
+            val script = buildPowerShellInstallScript(listOf(activation, activation))
+            val runner = File.createTempFile("onboarding-activation", ".ps1")
+            try {
+                runner.writeText(script)
+                val proc = ProcessBuilder(
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    runner.absolutePath,
+                ).redirectErrorStream(true).start()
+                val out = proc.inputStream.bufferedReader().readText()
+                assertEquals(0, proc.waitFor(), "PowerShell rejected profile activation:\n$out\n---\n$script")
+                assertEquals(1, profile.readLines().count { it == "boss-test-activation" }, profile.readText())
+            } finally {
+                runner.delete()
+            }
+        } finally {
+            profile.delete()
+        }
+    }
+
+    @Test
     fun `PowerShell runner preserves a failing native exit code`() {
         if (!isWindows) return
         val script = buildPowerShellInstallScript(

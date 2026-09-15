@@ -476,6 +476,7 @@ object BossTermSetupController {
 
     fun setupTerminalActivity(terminalId: String): SetupTerminalActivity = when {
         !hasSetupTerminal(terminalId) -> SetupTerminalActivity.UNKNOWN
+        !terminalBoundarySafe -> SetupTerminalActivity.UNKNOWN
         _state.value.agentDebugRequestInFlight || _state.value.agentDebugActive -> SetupTerminalActivity.HANDOFF
         synchronized(terminalLock) { pendingTerminalCommand != null } -> SetupTerminalActivity.BUSY
         else -> SetupTerminalActivity.IDLE
@@ -492,18 +493,33 @@ object BossTermSetupController {
 
     /** Requests an exclusive terminal handoff. Active setup work is interrupted at its sentinel boundary. */
     fun askFluckToDebugAndFix(): Boolean {
-        if (!canAskFluckToDebugAndFix()) return false
-        val current = _state.value
-        val sessionId = current.sessionId ?: return false
-        synchronized(terminalLock) { activeHandoffRequestId = UUID.randomUUID().toString() }
-        handoffRequestedSessionId = sessionId
-        updateSession(sessionId) {
-            it.copy(agentDebugRequestInFlight = true, agentDebugActive = false, agentDebugError = null)
-        }
+        val sessionId = _state.value.sessionId ?: return false
         val interrupted = synchronized(terminalLock) {
-            val pending = pendingTerminalCommand ?: return@synchronized null
-            val tabId = terminalTabId ?: return@synchronized null
-            if (terminalStateOrNull()?.sendInput(byteArrayOf(0x03), tabId) != true) return@synchronized null
+            val current = _state.value
+            val terminalId = current.setupTerminalId
+            if (
+                current.sessionId != sessionId || !current.fluckAvailable || terminalId == null ||
+                !hasSetupTerminal(terminalId) || !terminalBoundarySafe || current.agentDebugRequestInFlight ||
+                current.agentDebugActive || current.agentDebugAwaitingVerification
+            ) return false
+            val pending = pendingTerminalCommand
+            if (pending == null && current.failureMessage == null) return false
+
+            activeHandoffRequestId = UUID.randomUUID().toString()
+            if (pending != null) {
+                handoffRequestedSessionId = sessionId
+                val tabId = terminalTabId
+                if (tabId == null || terminalStateOrNull()?.sendInput(byteArrayOf(0x03), tabId) != true) {
+                    activeHandoffRequestId = null
+                    handoffRequestedSessionId = null
+                    return false
+                }
+            } else {
+                handoffRequestedSessionId = null
+            }
+            updateSession(sessionId) {
+                it.copy(agentDebugRequestInFlight = true, agentDebugActive = false, agentDebugError = null)
+            }
             pending
         }
         if (interrupted != null) {
@@ -526,10 +542,8 @@ object BossTermSetupController {
                     }
                 }
             }
-        } else if (current.failureMessage != null) {
-            resumeFailedTaskWithAgent(sessionId)
         } else {
-            return clearHandoffRequest(sessionId, "This setup step already finished. Choose Debug on the active step.")
+            resumeFailedTaskWithAgent(sessionId)
         }
         return true
     }
@@ -973,8 +987,8 @@ object BossTermSetupController {
             ShellCustomizationChoice.PREZTO -> "source \$HOME/.zprezto/init.zsh"
             else -> return ""
         }
-        return "\nmkdir -p \"\$(dirname \"$file\")\" && touch \"$file\" && " +
-            "grep -Fq '$line' \"$file\" || echo '$line' >> \"$file\"\n"
+        return "\nmkdir -p \"\$(dirname \"$file\")\" && touch \"$file\" && { " +
+            "grep -Fq '$line' \"$file\" || echo '$line' >> \"$file\"; }\n"
     }
 
     private fun resolvePackageManager(
@@ -1167,6 +1181,7 @@ object BossTermSetupController {
         val wrapper = File.createTempFile("bossterm-setup-wrapper-", if (windows) ".ps1" else ".sh").also(::restrictToOwner)
         val completion = CompletableDeferred<CommandResult>()
         val pending = PendingTerminalCommand(SetupTerminalSentinelParser(token), completion)
+        var poller: Job? = null
         try {
             synchronized(terminalLock) {
                 check(pendingTerminalCommand == null) { "A setup command is already active" }
@@ -1199,7 +1214,7 @@ object BossTermSetupController {
                 return CommandResult(-1, "Interactive terminal rejected the setup command")
             }
             terminalCommandSubmittedForTest = true
-            val poller = scope.launch {
+            poller = scope.launch {
                 var previous = ""
                 while (!completion.isCompleted && _state.value.sessionId == sessionId) {
                     val snapshot = terminal.getTabById(tabId)?.textBuffer?.createSnapshot()
@@ -1220,12 +1235,13 @@ object BossTermSetupController {
             }
             return (withTimeoutOrNull(TASK_TIMEOUT_MINUTES * 60_000L) { completion.await() }
                 ?: run {
+                    terminalBoundarySafe = false
                     synchronized(terminalLock) {
                         if (pendingTerminalCommand === pending) pendingTerminalCommand = null
                     }
                     terminal.sendInput(byteArrayOf(0x03), tabId)
                     CommandResult(TIMEOUT_EXIT_CODE, "Task timed out after $TASK_TIMEOUT_MINUTES minutes")
-                }).also { poller.cancel() }
+                })
         } catch (cancelled: CancellationException) {
             synchronized(terminalLock) {
                 if (pendingTerminalCommand === pending) pendingTerminalCommand = null
@@ -1235,6 +1251,7 @@ object BossTermSetupController {
         } catch (error: Exception) {
             return CommandResult(-1, error.message ?: error::class.simpleName.orEmpty())
         } finally {
+            poller?.cancel()
             synchronized(terminalLock) {
                 if (pendingTerminalCommand === pending) pendingTerminalCommand = null
             }

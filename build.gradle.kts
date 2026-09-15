@@ -303,6 +303,9 @@ tasks.withType<Test>().configureEach {
 // Keep the diagnostic thin JAR from replacing the installable plugin artifact.
 tasks.jar {
     archiveClassifier.set("thin")
+    // The shared release workflow uploads build/libs/*.jar. Keep diagnostics out
+    // of that directory so the store can only select the installable artifact.
+    destinationDirectory.set(layout.buildDirectory.dir("diagnostic-libs"))
 }
 
 // Task to build plugin JAR with compiled classes + bossterm-compose bundled.
