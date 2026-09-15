@@ -13,9 +13,17 @@ fun buildInstallCommand(
     return try {
         buildInstallCommandInternal(selections, installed, targetOs, currentShell)
     } catch (e: Exception) {
-        val message = e.message.orEmpty().replace("'", "''")
-        if (targetOs.isWindows) "Write-Error 'Error building installation command: $message'; exit 1" else
-            "echo 'Error building installation command: ${e.message?.replace("'", "\\'")}' && exit 1"
+        installPlanErrorCommand(e.message.orEmpty(), targetOs)
+    }
+}
+
+internal fun installPlanErrorCommand(message: String, targetOs: TargetOs): String {
+    val prefix = "Error building installation command: "
+    return if (targetOs.isWindows) {
+        "Write-Error '${prefix + message.replace("'", "''")}'; exit 1"
+    } else {
+        val quoted = (prefix + message).replace("'", "'\"'\"'")
+        "printf '%s\\n' '$quoted' >&2\nexit 1"
     }
 }
 
@@ -134,7 +142,10 @@ private fun buildInstallCommandInternal(
         // Set the selected shell as default even when it was already installed. The old
         // `!shellInstalled` condition made choosing an existing Bash/Fish entry a silent no-op.
         if (!isWindows && currentShell != shellCmd) {
-            sudoCommands.add("sudo chsh -s \$(which $shellCmd) \$USER && echo '✓ Default shell changed to $shellCmd'")
+            val changeShell = "sudo chsh -s \$(which $shellCmd) \$USER && echo '✓ Default shell changed to $shellCmd'"
+            // Homebrew shell installation is a user command, so its chsh must follow it. Linux
+            // package installation and chsh are both sudo commands and already preserve order.
+            if (isMac) userCommands.add(changeShell) else sudoCommands.add(changeShell)
         }
     }
 
@@ -418,7 +429,8 @@ private fun buildInstallCommandInternal(
     // Authenticate sudo upfront for Unix (Starship and other tools internally use sudo)
     // Pre-auth sudo when any step may need it: explicit sudo commands, Starship (creates
     // /usr/local/bin), or mac AI installs (a root-owned npm global prefix → sudo npm).
-    val needsSudo = !isWindows && (sudoCommands.isNotEmpty() || userCommands.any { it.contains("starship") } ||
+    val needsSudo = !isWindows && (sudoCommands.isNotEmpty() || userCommands.any { "sudo " in it } ||
+        userCommands.any { it.contains("starship") } ||
         (isMac && aiToInstall.isNotEmpty()))
     if (needsSudo) {
         allCommands.add("echo '🔐 Authenticating administrator access...'")

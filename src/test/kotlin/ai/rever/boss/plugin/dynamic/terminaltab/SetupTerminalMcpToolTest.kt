@@ -2,6 +2,7 @@ package ai.rever.boss.plugin.dynamic.terminaltab
 
 import ai.rever.bossterm.compose.mcp.BossTermMcpConfig
 import ai.rever.bossterm.compose.mcp.BossTermMcpServer
+import ai.rever.bossterm.compose.settings.SettingsManager
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequestParams
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
@@ -118,6 +119,18 @@ class SetupTerminalMcpToolTest {
         })
         assertEquals(true, oversized.isError)
         assertEquals(listOf("answer\r"), writes)
+        val settings = SettingsManager.instance
+        val originalDisabledTools = settings.settings.value.disabledMcpTools
+        try {
+            settings.updateSetting { copy(disabledMcpTools = setOf("setup_terminal_send_input")) }
+            val disabledInputSignal = call("setup_terminal_send_signal", buildJsonObject {
+                put("terminal_id", "live-pty"); put("request_id", "accepted-request"); put("signal", "ctrl_d")
+            })
+            assertEquals(true, disabledInputSignal.isError)
+            assertEquals(listOf("answer\r"), writes)
+        } finally {
+            settings.updateSetting { copy(disabledMcpTools = originalDisabledTools) }
+        }
         handoffActive = false
         val staleRead = call("setup_terminal_read", readArguments)
         assertEquals(true, staleRead.isError)

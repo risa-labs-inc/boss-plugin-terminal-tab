@@ -141,17 +141,21 @@ fun OnboardingWizard(
         onDismiss()
     }
 
+    fun dismissFailure() {
+        BossTermSetupController.clearFinished()
+        onDismiss()
+    }
+
     fun closeRequest() {
-        when {
-            setupState.sessionId == null -> finishWithoutSetup()
-            isVerifiedSetupSuccess(setupState) -> {
+        when (setupCloseDisposition(setupState, canRunInBackground)) {
+            SetupCloseDisposition.FINISH_WITHOUT_SETUP -> finishWithoutSetup()
+            SetupCloseDisposition.COMPLETE -> {
                 BossTermSetupController.clearFinished()
                 onComplete()
             }
-            canRunInBackground -> {
-                BossTermSetupController.sendToBackground()
-            }
-            isFinishedSetupFailure(setupState) -> onDismiss()
+            SetupCloseDisposition.DISMISS_FAILURE -> dismissFailure()
+            SetupCloseDisposition.BACKGROUND -> BossTermSetupController.sendToBackground()
+            SetupCloseDisposition.IGNORE -> Unit
         }
     }
 
@@ -190,6 +194,7 @@ fun OnboardingWizard(
                         BossTermSetupController.sendToBackground()
                     },
                     onRetry = { BossTermSetupController.retry() },
+                    onDismissFailure = ::dismissFailure,
                     onDone = {
                         BossTermSetupController.clearFinished()
                         onComplete()
@@ -687,6 +692,7 @@ internal fun SetupProgress(
     canRetry: Boolean,
     onBackground: () -> Unit,
     onRetry: () -> Unit,
+    onDismissFailure: () -> Unit,
     onDone: () -> Unit,
 ) {
     val scroll = rememberScrollState()
@@ -824,6 +830,12 @@ internal fun SetupProgress(
                 }
             }
             Spacer(Modifier.weight(1f))
+            if (failed) {
+                TextButton(onClick = onDismissFailure) {
+                    Text("Dismiss", color = TextSecondary)
+                }
+                Spacer(Modifier.width(10.dp))
+            }
             if (
                 state.isRunning || failed || state.agentDebugRequestInFlight || state.agentDebugActive ||
                 state.agentDebugAwaitingVerification
@@ -1149,6 +1161,25 @@ internal fun isVerifiedSetupSuccess(state: BossTermSetupState): Boolean =
 
 internal fun isFinishedSetupFailure(state: BossTermSetupState): Boolean =
     state.finished && state.failureMessage != null && !state.isRunning
+
+internal enum class SetupCloseDisposition {
+    FINISH_WITHOUT_SETUP,
+    COMPLETE,
+    DISMISS_FAILURE,
+    BACKGROUND,
+    IGNORE,
+}
+
+internal fun setupCloseDisposition(
+    state: BossTermSetupState,
+    canRunInBackground: Boolean,
+): SetupCloseDisposition = when {
+    state.sessionId == null -> SetupCloseDisposition.FINISH_WITHOUT_SETUP
+    isVerifiedSetupSuccess(state) -> SetupCloseDisposition.COMPLETE
+    isFinishedSetupFailure(state) -> SetupCloseDisposition.DISMISS_FAILURE
+    canRunInBackground && state.isRunning -> SetupCloseDisposition.BACKGROUND
+    else -> SetupCloseDisposition.IGNORE
+}
 
 internal fun availablePromptChoices(
     shell: ShellChoice,

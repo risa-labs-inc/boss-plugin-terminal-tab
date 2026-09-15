@@ -9,6 +9,28 @@ import kotlin.test.assertTrue
 
 class BossTermSetupStateTest {
     @Test
+    fun `closing a finished failure dismisses it instead of backgrounding forever`() {
+        val failure = BossTermSetupState(
+            sessionId = "failed-session",
+            tasks = listOf(task("git", SetupTaskStatus.NEEDS_ATTENTION)),
+            finished = true,
+            failureMessage = "Git needs attention",
+        )
+
+        assertEquals(SetupCloseDisposition.DISMISS_FAILURE, setupCloseDisposition(failure, canRunInBackground = true))
+    }
+
+    @Test
+    fun `closing an active setup still sends it to the background`() {
+        val active = BossTermSetupState(
+            sessionId = "active-session",
+            tasks = listOf(task("git", SetupTaskStatus.RUNNING)),
+        )
+
+        assertEquals(SetupCloseDisposition.BACKGROUND, setupCloseDisposition(active, canRunInBackground = true))
+    }
+
+    @Test
     fun `progress follows completed tasks and preserves an active repair`() {
         val state = BossTermSetupState(
             sessionId = "setup-1",

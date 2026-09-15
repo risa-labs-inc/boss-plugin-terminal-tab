@@ -48,6 +48,39 @@ class OnboardingInstallScriptTest {
         assertTrue(script.contains("sudo chsh -s \$(which fish) \$USER"), script)
     }
 
+    @Test
+    fun `fresh macOS shell is installed before it becomes the default`() {
+        val script = buildInstallCommand(
+            OnboardingSelections(
+                shell = ShellChoice.FISH,
+                shellCustomization = ShellCustomizationChoice.KEEP_EXISTING,
+                installGit = false,
+                installGitHubCLI = false,
+                aiAssistants = emptySet(),
+            ),
+            InstalledTools(fish = false),
+            TargetOs.MAC,
+            currentShell = "zsh",
+        )
+
+        val authentication = script.indexOf("sudo -v")
+        val install = script.indexOf("brew install fish")
+        val makeDefault = script.indexOf("sudo chsh -s \$(which fish) \$USER")
+        assertTrue(authentication in 0 until install, script)
+        assertTrue(install in 0 until makeDefault, script)
+    }
+
+    @Test
+    fun `Unix install-plan errors safely quote apostrophes`() {
+        val expected = "Error building installation command: installer isn't available"
+        val script = installPlanErrorCommand("installer isn't available", TargetOs.MAC)
+        val proc = ProcessBuilder("bash", "-c", script).redirectErrorStream(true).start()
+        val output = proc.inputStream.bufferedReader().readText().trim()
+
+        assertEquals(1, proc.waitFor(), script)
+        assertEquals(expected, output)
+    }
+
     /** The default script plus Codex, whose registry entry installs via `npm install -g`. */
     private fun scriptWithNpmAssistant(): String =
         buildInstallCommand(

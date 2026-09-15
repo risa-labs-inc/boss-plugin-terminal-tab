@@ -232,7 +232,12 @@ private suspend fun setupSignal(args: JsonObject): CallToolResult {
     val signal = args.str("signal") ?: return errorResult("Missing required argument: signal")
     val sent = when (signal.lowercase()) {
         "ctrl_c" -> setupTerminalToolBridge.interrupt(id, requestId)
-        "ctrl_d" -> setupTerminalToolBridge.input(id, requestId, byteArrayOf(0x04))
+        "ctrl_d" -> {
+            if (!setupToolEnabled("setup_terminal_send_input")) {
+                return errorResult("setup_terminal_send_input is disabled in MCP settings.")
+            }
+            setupTerminalToolBridge.input(id, requestId, byteArrayOf(0x04))
+        }
         else -> return errorResult("Unsupported signal; use ctrl_c or ctrl_d.")
     }
     return if (sent) jsonResult(false) { put("ok", true) }
