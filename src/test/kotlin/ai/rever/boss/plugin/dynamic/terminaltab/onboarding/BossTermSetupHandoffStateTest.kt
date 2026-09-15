@@ -50,7 +50,7 @@ class BossTermSetupHandoffStateTest {
                     BossTermSetupController.sendSetupTerminalInput(
                         request.terminalId,
                         request.requestId,
-                        "touch '${fix.absolutePath}'\r".toByteArray(),
+                        "touch '${fix.absolutePath}'; sleep 60\r".toByteArray(),
                     ),
                 )
                 resume.await()
@@ -98,9 +98,19 @@ class BossTermSetupHandoffStateTest {
             waitUntil(timeoutMillis = 15_000) { BossTermSetupController.canAskFluckToDebugAndFix() }
             assertTrue(BossTermSetupController.askFluckToDebugAndFix())
             waitUntil(timeoutMillis = 15_000) { BossTermSetupController.state.value.agentDebugActive }
+            // The fix has landed, but the fake agent deliberately leaves a foreground process.
+            // Resume must interrupt it and prove a fresh shell boundary before verification.
+            waitUntil(timeoutMillis = 15_000) { fix.exists() }
 
             assertTrue(BossTermSetupController.resumeActiveDebugAndVerify())
-            waitUntil(timeoutMillis = 15_000) { BossTermSetupController.state.value.awaitingGitHubAuthentication }
+            waitUntil(timeoutMillis = 15_000) {
+                BossTermSetupController.state.value.let { it.awaitingGitHubAuthentication || it.finished }
+            }
+            assertTrue(
+                BossTermSetupController.state.value.awaitingGitHubAuthentication,
+                "state=${BossTermSetupController.state.value}; " +
+                    "terminal=${BossTermSetupController.terminalCapturedOutputForTest()}",
+            )
             assertEquals(SetupTaskStatus.COMPLETE, BossTermSetupController.state.value.tasks.single().status)
             assertTrue("VERIFIER_RAN" in BossTermSetupController.terminalCapturedOutputForTest())
 

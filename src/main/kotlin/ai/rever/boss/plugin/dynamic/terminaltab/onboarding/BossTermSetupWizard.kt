@@ -761,10 +761,12 @@ internal fun SetupProgress(
                         modifier = Modifier.fillMaxSize(),
                     )
                     LaunchedEffect(windowId, containerId, terminalState) {
-                        while (
-                            BossTermSetupController.state.value.setupTerminalContainerId == containerId &&
-                            !BossTermSetupController.ensureSetupTerminalTab(windowId, containerId)
-                        ) {
+                        // Match the controller's bounded readiness budget. Its task failure
+                        // surfaces a visible error if no shell becomes ready within that budget.
+                        repeat(1_200) {
+                            if (BossTermSetupController.state.value.setupTerminalContainerId != containerId ||
+                                BossTermSetupController.ensureSetupTerminalTab(windowId, containerId)
+                            ) return@LaunchedEffect
                             delay(25)
                         }
                     }
@@ -1006,9 +1008,6 @@ private fun TerminalPreview(shell: ShellChoice, prompt: ShellCustomizationChoice
     }
 }
 
-internal fun promptPreviewText(shell: ShellChoice, prompt: ShellCustomizationChoice): String =
-    promptPreviewSegments(shell, prompt).joinToString("")
-
 private fun promptPreviewSegments(shell: ShellChoice, prompt: ShellCustomizationChoice): List<String> =
     when (prompt) {
         ShellCustomizationChoice.STARSHIP -> listOf("~/project ", "on main ", "via kotlin ❯")
@@ -1027,27 +1026,6 @@ private fun promptPreviewSegments(shell: ShellChoice, prompt: ShellCustomization
             )
         ShellCustomizationChoice.KEEP_EXISTING -> listOf("Your current prompt is unchanged")
     }
-
-@Composable
-private fun SetupOption(
-    title: String,
-    description: String,
-    modifier: Modifier = Modifier,
-    trailing: @Composable () -> Unit,
-) {
-    Row(
-        modifier.fillMaxWidth().border(1.dp, BorderColor, RoundedCornerShape(9.dp)).padding(14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(3.dp))
-            Text(description, color = TextMuted, fontSize = 11.sp)
-        }
-        Spacer(Modifier.width(24.dp))
-        trailing()
-    }
-}
 
 @Composable
 private fun CompactChoiceField(
@@ -1210,4 +1188,8 @@ private fun promptLabel(prompt: ShellCustomizationChoice): String = when (prompt
     else -> prompt.displayName
 }
 
-private fun shellPath(shell: ShellChoice): String = shell.command.takeIf { it.isNotBlank() }?.let { " · /bin/$it" }.orEmpty()
+private fun shellPath(shell: ShellChoice): String = when (shell) {
+    ShellChoice.KEEP_CURRENT -> ""
+    ShellChoice.POWERSHELL, ShellChoice.CMD -> " · ${shell.command}"
+    else -> " · /bin/${shell.command}"
+}

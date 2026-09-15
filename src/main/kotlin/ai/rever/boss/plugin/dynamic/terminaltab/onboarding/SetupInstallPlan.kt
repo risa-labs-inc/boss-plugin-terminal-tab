@@ -13,7 +13,9 @@ fun buildInstallCommand(
     return try {
         buildInstallCommandInternal(selections, installed, targetOs, currentShell)
     } catch (e: Exception) {
-        "echo 'Error building installation command: ${e.message?.replace("'", "\\'")}' && exit 1"
+        val message = e.message.orEmpty().replace("'", "''")
+        if (targetOs.isWindows) "Write-Error 'Error building installation command: $message'; exit 1" else
+            "echo 'Error building installation command: ${e.message?.replace("'", "\\'")}' && exit 1"
     }
 }
 
@@ -47,9 +49,8 @@ private const val FAILED_INSTALLS_VAR = "BOSSTERM_FAILED_INSTALLS"
  * leaves a half-configured shell with no PATH fixup and no summary of what actually failed. The name
  * is recorded in [FAILED_INSTALLS_VAR] and reported at the end.
  *
- * Windows is left alone: `&&`-joined PowerShell short-circuits rather than aborting on a failed
- * exit code, and every AI entry resolves to npm (batched) or winget there anyway, so no per-CLI
- * script command reaches this path on Windows.
+ * Windows is left alone because every AI entry resolves to npm (batched) or winget there, so no
+ * per-CLI script command reaches this path on Windows.
  */
 private fun nonFatalInstall(displayName: String, command: String, isWindows: Boolean): String {
     if (isWindows) return command
@@ -84,7 +85,7 @@ private fun buildInstallCommandInternal(
         return when {
             installed.winget -> "winget install $wingetId --accept-source-agreements --accept-package-agreements"
             installed.chocolatey -> "choco install $chocoName -y"
-            else -> "echo 'No package manager available. Please install winget or Chocolatey first.' && exit 1"
+            else -> "Write-Error 'No package manager available. Please install winget or Chocolatey first.'; exit 1"
         }
     }
 
@@ -166,13 +167,14 @@ private fun buildInstallCommandInternal(
                         userCommands.add(getWindowsInstall("Starship.Starship", "starship"))
                         // Configure PowerShell profile
                         postInstallCommands.add(
-                            "powershell -Command \"" +
-                            "\$profilePath = \\\"\$env:USERPROFILE\\\\Documents\\\\PowerShell\\\\Microsoft.PowerShell_profile.ps1\\\"; " +
-                            "if (!(Test-Path (Split-Path \\\$profilePath))) { New-Item -ItemType Directory -Path (Split-Path \\\$profilePath) -Force | Out-Null }; " +
-                            "if (!(Test-Path \\\$profilePath)) { New-Item -ItemType File -Path \\\$profilePath -Force | Out-Null }; " +
-                            "if (!(Select-String -Path \\\$profilePath -Pattern 'starship init' -Quiet -ErrorAction SilentlyContinue)) { " +
-                            "Add-Content -Path \\\$profilePath -Value 'Invoke-Expression (&starship init powershell)' }; " +
-                            "Write-Host 'Starship configured for PowerShell'\""
+                            "\$profilePath = \$PROFILE.CurrentUserCurrentHost; " +
+                                "\$profileDirectory = Split-Path \$profilePath; " +
+                                "if (!(Test-Path \$profileDirectory)) { " +
+                                "New-Item -ItemType Directory -Path \$profileDirectory -Force | Out-Null }; " +
+                                "if (!(Test-Path \$profilePath)) { New-Item -ItemType File -Path \$profilePath -Force | Out-Null }; " +
+                                "if (!(Select-String -Path \$profilePath -Pattern 'starship init' -Quiet -ErrorAction SilentlyContinue)) { " +
+                                "Add-Content -Path \$profilePath -Value 'Invoke-Expression (&starship init powershell)' }; " +
+                                "Write-Host 'Starship configured for PowerShell'"
                         )
                     } else {
                         // Unix: Uninstall Oh My Zsh and Prezto first (they conflict with Starship on Zsh)
@@ -212,13 +214,14 @@ private fun buildInstallCommandInternal(
                     userCommands.add(getWindowsInstall("JanDeDobbeleer.OhMyPosh", "oh-my-posh"))
                     // Configure PowerShell profile
                     postInstallCommands.add(
-                        "powershell -Command \"" +
-                        "\$profilePath = \\\"\$env:USERPROFILE\\\\Documents\\\\PowerShell\\\\Microsoft.PowerShell_profile.ps1\\\"; " +
-                        "if (!(Test-Path (Split-Path \\\$profilePath))) { New-Item -ItemType Directory -Path (Split-Path \\\$profilePath) -Force | Out-Null }; " +
-                        "if (!(Test-Path \\\$profilePath)) { New-Item -ItemType File -Path \\\$profilePath -Force | Out-Null }; " +
-                        "if (!(Select-String -Path \\\$profilePath -Pattern 'oh-my-posh' -Quiet -ErrorAction SilentlyContinue)) { " +
-                        "Add-Content -Path \\\$profilePath -Value 'oh-my-posh init pwsh | Invoke-Expression' }; " +
-                        "Write-Host 'Oh My Posh configured for PowerShell'\""
+                        "\$profilePath = \$PROFILE.CurrentUserCurrentHost; " +
+                            "\$profileDirectory = Split-Path \$profilePath; " +
+                            "if (!(Test-Path \$profileDirectory)) { " +
+                            "New-Item -ItemType Directory -Path \$profileDirectory -Force | Out-Null }; " +
+                            "if (!(Test-Path \$profilePath)) { New-Item -ItemType File -Path \$profilePath -Force | Out-Null }; " +
+                            "if (!(Select-String -Path \$profilePath -Pattern 'oh-my-posh' -Quiet -ErrorAction SilentlyContinue)) { " +
+                            "Add-Content -Path \$profilePath -Value 'oh-my-posh init pwsh | Invoke-Expression' }; " +
+                            "Write-Host 'Oh My Posh configured for PowerShell'"
                     )
                 }
                 ShellCustomizationChoice.OH_MY_ZSH -> {
@@ -331,15 +334,18 @@ private fun buildInstallCommandInternal(
                 val nodeInstallCmd = when {
                     installed.winget -> "winget install OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements"
                     installed.chocolatey -> "choco install nodejs-lts -y"
-                    else -> "echo 'No package manager available. Please install Node.js manually.' && exit 1"
+                    else -> "Write-Error 'No package manager available. Please install Node.js manually.'; exit 1"
                 }
                 // Windows cleanup: remove partial npm installations
                 val windowsCleanup = packagesToClean.joinToString("; ") { pkg ->
                     "Remove-Item -Recurse -Force \"\$(npm prefix -g)/node_modules/$pkg\" -ErrorAction SilentlyContinue"
                 }
-                "powershell -Command \"if (!(Get-Command npm -ErrorAction SilentlyContinue)) { $nodeInstallCmd } ; " +
-                "Write-Host 'Cleaning up any partial installations...'; $windowsCleanup; " +
-                "npm install -g $npmPackages\""
+                "if (!(Get-Command npm -ErrorAction SilentlyContinue)) { " +
+                    "$nodeInstallCmd; " +
+                    "if (-not \$?) { if (\$LASTEXITCODE -ne 0) { exit \$LASTEXITCODE }; exit 1 }; " +
+                    "if (\$LASTEXITCODE -ne 0) { exit \$LASTEXITCODE } }; " +
+                    "Write-Host 'Cleaning up any partial installations...'; $windowsCleanup; " +
+                    "npm install -g $npmPackages"
             }
             else -> {
                 // Linux: use nvm to install Node.js and npm if not available
@@ -428,13 +434,13 @@ private fun buildInstallCommandInternal(
     }
 
     // Add completion message
-    allCommands.add("echo ''")
-    allCommands.add("echo '✓ Installation complete!'")
+    allCommands.add(if (isWindows) "Write-Host ''" else "echo ''")
+    allCommands.add(if (isWindows) "Write-Host '✓ Installation complete!'" else "echo '✓ Installation complete!'")
 
-    // For Windows, join with && (PowerShell handles long commands better)
-    // For Unix, return bash script content (caller will write to file)
+    // PowerShell 5.1 has no &&/|| chain operators. Run one script block per step and inspect both
+    // PowerShell's success flag and native-process exit code before proceeding.
     return if (isWindows) {
-        allCommands.joinToString(" && ")
+        buildPowerShellInstallScript(allCommands)
     } else {
         // Return script content - caller will write to file and run it
         buildString {
@@ -444,5 +450,22 @@ private fun buildInstallCommandInternal(
                 appendLine(cmd)
             }
         }
+    }
+}
+
+internal fun buildPowerShellInstallScript(commands: List<String>): String = buildString {
+    appendLine("\$ErrorActionPreference = 'Stop'")
+    commands.forEach { command ->
+        appendLine("\$global:LASTEXITCODE = 0")
+        appendLine("& {")
+        appendLine(command.prependIndent("    "))
+        appendLine("}")
+        appendLine("\$bossStepSucceeded = \$?")
+        appendLine("\$bossStepExit = \$LASTEXITCODE")
+        appendLine("if (-not \$bossStepSucceeded) {")
+        appendLine("    if (\$bossStepExit -ne 0) { exit \$bossStepExit }")
+        appendLine("    exit 1")
+        appendLine("}")
+        appendLine("if (\$bossStepExit -ne 0) { exit \$bossStepExit }")
     }
 }

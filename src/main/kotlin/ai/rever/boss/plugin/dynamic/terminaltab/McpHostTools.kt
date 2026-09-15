@@ -200,7 +200,7 @@ private suspend fun setupRead(args: JsonObject): CallToolResult {
     if (!setupToolEnabled("setup_terminal_read")) return errorResult("setup_terminal_read is disabled in MCP settings.")
     val id = args.str("terminal_id") ?: return errorResult("Missing required argument: terminal_id")
     val requestId = args.str("request_id") ?: return errorResult("Missing required argument: request_id")
-    val lines = args.str("lines")?.toIntOrNull()?.coerceIn(1, 5_000) ?: 200
+    val lines = args.str("lines")?.toIntOrNull()?.coerceIn(1, 2_000) ?: 200
     val scrollback = setupTerminalToolBridge.read(id, requestId, lines)
         ?: return errorResult("Setup handoff is unavailable or stale.")
     return jsonResult(false) {

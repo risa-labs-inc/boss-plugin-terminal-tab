@@ -87,6 +87,37 @@ class BossTermSetupStateTest {
     }
 
     @Test
+    fun `AI install uses the shell selected for this setup`() {
+        val assistant = AIAssistants.BUILTIN.first()
+        val plan = BossTermSetupController.buildTaskPlan(
+            OnboardingSelections(
+                packageManager = PackageManagerChoice.NONE,
+                shell = ShellChoice.ZSH,
+                shellCustomization = ShellCustomizationChoice.KEEP_EXISTING,
+                installGit = false,
+                installGitHubCLI = false,
+                aiAssistants = setOf(assistant.id),
+            ),
+            InstalledTools(aiAssistants = mapOf(assistant.id to false)),
+            TargetOs.LINUX,
+        ).first { it.state.id == "ai-${assistant.id}" }
+
+        assertTrue(plan.command.startsWith("export SHELL=\"\$(command -v zsh)\"\n"), plan.command)
+    }
+
+    @Test
+    fun `empty current shell falls back to a usable platform shell`() {
+        assertEquals(
+            ShellChoice.ZSH,
+            BossTermSetupController.resolveConfiguredShell(ShellChoice.KEEP_CURRENT, TargetOs.LINUX, ""),
+        )
+        assertEquals(
+            ShellChoice.POWERSHELL,
+            BossTermSetupController.resolveConfiguredShell(ShellChoice.KEEP_CURRENT, TargetOs.WINDOWS, ""),
+        )
+    }
+
+    @Test
     fun `verification is platform-specific and blank commands need none`() {
         assertEquals(null, BossTermSetupController.executableVerification("", TargetOs.MAC))
         val unixVerification = BossTermSetupController.executableVerification("git", TargetOs.LINUX)
@@ -114,14 +145,15 @@ class BossTermSetupStateTest {
     }
 
     @Test
-    fun `PowerShell prompt verification quotes the profile path expression`() {
+    fun `PowerShell prompt verification checks the active host profile`() {
         val verification = BossTermSetupController.promptVerification(
             ShellCustomizationChoice.OH_MY_POSH,
             ShellChoice.POWERSHELL,
             TargetOs.WINDOWS,
         ).orEmpty()
 
-        assertTrue(verification.contains("-LiteralPath (Join-Path \$env:USERPROFILE"))
+        assertTrue(verification.contains("-LiteralPath \$PROFILE.CurrentUserCurrentHost"))
+        assertFalse(verification.contains("Documents/PowerShell"))
     }
 
     @Test

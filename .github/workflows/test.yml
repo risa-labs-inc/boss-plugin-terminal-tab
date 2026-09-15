@@ -10,7 +10,15 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os == 'ubuntu-latest' && 'test' || 'windows-script-tests' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
@@ -41,8 +49,17 @@ jobs:
       # the one downloaded above. Actions sets it anyway; set explicitly so the
       # dependency is visible rather than inherited.
       - name: Compile and run tests
+        if: runner.os == 'Linux'
         # The setup lifecycle tests render a real terminal. Provide a display
         # on Linux and also validate the installable bundled artifact.
         run: xvfb-run -a ./gradlew test buildPluginJar --no-daemon
+        env:
+          CI: 'true'
+
+      # Exercise generated scripts with actual Windows PowerShell 5.1. These
+      # fixtures only run harmless commands; they never install packages.
+      - name: Verify Windows scripts
+        if: runner.os == 'Windows'
+        run: ./gradlew test --tests '*OnboardingInstallScriptTest' --tests '*PluginManifestTest' buildPluginJar --no-daemon
         env:
           CI: 'true'

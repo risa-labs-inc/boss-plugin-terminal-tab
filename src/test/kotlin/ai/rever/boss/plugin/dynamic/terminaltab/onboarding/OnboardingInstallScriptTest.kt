@@ -70,9 +70,8 @@ class OnboardingInstallScriptTest {
 
     /**
      * Windows can't run the `curl … | bash` installers the open-source CLIs ship, and the Windows
-     * branch joins everything with `&&` into one PowerShell chain — so a single leaked shell
-     * installer used to break the whole chain, taking git/gh/starship down with it. Every entry must
-     * resolve to npm or a winget/native command there.
+     * branch emits a PowerShell script, so a leaked shell installer would take git/gh/starship down
+     * with it. Every entry must resolve to npm or a winget/native command there.
      *
      * This is the case that shipped broken because all the Windows assertions early-returned.
      */
@@ -85,8 +84,72 @@ class OnboardingInstallScriptTest {
         )
         assertFalse(
             script.contains("#!/bin/bash"),
-            "Windows script should be a PowerShell-flavored chain, not a bash script:\n$script"
+            "Windows script should be a PowerShell script, not a bash script:\n$script"
         )
+    }
+
+    @Test
+    fun `windows install script is compatible with Windows PowerShell 5`() {
+        val script = windowsDefaultScript()
+
+        assertTrue(script.startsWith("\$ErrorActionPreference = 'Stop'"), script)
+        assertFalse(script.contains("&&"), "Windows PowerShell 5 does not support &&:\n$script")
+        assertFalse(script.contains("||"), "Windows PowerShell 5 does not support ||:\n$script")
+        assertTrue(script.contains("\$PROFILE.CurrentUserCurrentHost"), script)
+        assertFalse(script.contains("Documents\\PowerShell"), "Script must configure the active PowerShell profile:\n$script")
+        assertTrue(script.contains("if (-not \$bossStepSucceeded)"), script)
+        assertTrue(script.contains("if (\$bossStepExit -ne 0) { exit \$bossStepExit }"), script)
+    }
+
+    @Test
+    fun `windows native install failure cannot fall through to success`() {
+        val script = buildInstallCommand(
+            OnboardingSelections(
+                shellCustomization = ShellCustomizationChoice.KEEP_EXISTING,
+                installGit = true,
+                installGitHubCLI = false,
+                aiAssistants = emptySet(),
+            ),
+            InstalledTools(winget = true),
+            TargetOs.WINDOWS,
+        )
+
+        val install = script.indexOf("winget install Git.Git")
+        val exitGuard = script.indexOf("if (\$bossStepExit -ne 0) { exit \$bossStepExit }", install)
+        val success = script.indexOf("Installation complete!", install)
+        assertTrue(install >= 0, script)
+        assertTrue(exitGuard in (install + 1) until success, "winget failure must be checked before success:\n$script")
+    }
+
+    @Test
+    fun `PowerShell runner preserves a failing native exit code`() {
+        if (!isWindows) return
+        val script = buildPowerShellInstallScript(
+            listOf(
+                "Write-Host 'before'",
+                "cmd.exe /c exit 7",
+                "Write-Host 'must-not-run'",
+            ),
+        )
+        val tmp = File.createTempFile("onboarding-install", ".ps1")
+        try {
+            tmp.writeText(script)
+            val proc = ProcessBuilder(
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                tmp.absolutePath,
+            )
+                .redirectErrorStream(true)
+                .start()
+            val out = proc.inputStream.bufferedReader().readText()
+            assertEquals(7, proc.waitFor(), "PowerShell did not preserve the native failure:\n$out\n---\n$script")
+            assertFalse(out.contains("must-not-run"), "PowerShell continued after a failed step:\n$out")
+        } finally {
+            tmp.delete()
+        }
     }
 
     @Test
@@ -128,7 +191,7 @@ class OnboardingInstallScriptTest {
     fun `default install script is syntactically valid`() {
         val script = defaultScript()
         assertTrue(script.isNotBlank(), "generated install script must not be empty")
-        if (isWindows) return // Windows emits an &&-joined PowerShell-flavored line, not bash.
+        if (isWindows) return // Windows emits a PowerShell script, not bash.
 
         assertTrue(script.startsWith("#!/bin/bash"), "unix script should start with a shebang:\n$script")
         // `bash -n` parses without executing — the real guard against malformed commands.

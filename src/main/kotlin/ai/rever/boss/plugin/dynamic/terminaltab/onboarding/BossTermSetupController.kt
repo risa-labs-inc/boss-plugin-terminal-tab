@@ -169,6 +169,7 @@ object BossTermSetupController {
         terminalReadyCommand = null
     }
 
+    @Synchronized
     fun start(
         windowId: String,
         selections: OnboardingSelections,
@@ -312,7 +313,7 @@ object BossTermSetupController {
                 }
             }
             if (decision == SetupRepair.STOP) {
-                appendOutput(sessionId, "Fluck Agent needs your attention before setup can continue")
+                appendOutput(sessionId, "This step needs your attention before setup can continue")
                 break
             }
             appendOutput(sessionId, "Fluck Agent is retrying ${plan.state.title}")
@@ -333,13 +334,6 @@ object BossTermSetupController {
             result
         }
     }
-
-    internal fun requiresAdminAuthorization(
-        selections: OnboardingSelections,
-        installed: InstalledTools,
-        targetOs: TargetOs = TargetOs.current(),
-    ): Boolean =
-        buildTaskPlan(selections, installed, targetOs).any { "BOSSTERM_SUDO_PWD" in it.command }
 
     internal fun supportsSelections(selections: OnboardingSelections, targetOs: TargetOs): Boolean {
         val shell = resolveConfiguredShell(selections.shell, targetOs)
@@ -370,19 +364,21 @@ object BossTermSetupController {
         _state.update { it.copy(isBackgrounded = false) }
     }
 
+    @Synchronized
     fun clearFinished() {
-        _state.update { current ->
-            if (!current.isRunning && !current.awaitingGitHubAuthentication) {
-                if (retainedRequest?.sessionId == current.sessionId) retainedRequest = null
-                disposeTerminal()
-                BossTermSetupState()
-            } else {
-                current
-            }
+        var current: BossTermSetupState
+        while (true) {
+            current = _state.value
+            if (current.isRunning || current.awaitingGitHubAuthentication) return
+            if (_state.compareAndSet(current, BossTermSetupState())) break
         }
+        if (retainedRequest?.sessionId == current.sessionId) retainedRequest = null
+        sessionSupervisor = null
+        disposeTerminal()
     }
 
     /** Stops an active setup when this dynamic plugin is disabled or replaced. Idempotent. */
+    @Synchronized
     fun abortForPluginDispose() {
         val sessionId = _state.value.sessionId ?: return
         activeSessionJob?.cancel()
@@ -402,6 +398,7 @@ object BossTermSetupController {
         handoffRequestedSessionId = null
         resumeDebugAndVerifyRequested = false
         retainedRequest = null
+        sessionSupervisor = null
         disposeTerminal()
         terminalReady = CompletableDeferred()
         terminalBoundarySafe = true
@@ -430,7 +427,11 @@ object BossTermSetupController {
                     }) {
                     val output = synchronized(pending.output) { pending.output.toString() }
                     lastTerminalOutputForTest = output
+                    // Only the wrapper's random completion marker proves that an interrupted
+                    // command reached a shell boundary. Timeout and cleanup paths do not.
+                    terminalBoundarySafe = true
                     pending.completion.complete(CommandResult(exitCode, output))
+                    notifyDebugEligibilityChanged(sessionId)
                 }
             }
         }
@@ -520,7 +521,7 @@ object BossTermSetupController {
                         it.copy(
                             agentDebugRequestInFlight = false,
                             agentDebugActive = false,
-                            agentDebugError = "Could not pause this step safely. Try again after it stops.",
+                            agentDebugError = "Could not prove a safe shell boundary. Restart setup before debugging again.",
                         )
                     }
                 }
@@ -675,7 +676,6 @@ object BossTermSetupController {
             activeHandoffRequestId = null
         }
         resumeDebugAndVerifyRequested = false
-        terminalBoundarySafe = true
         updateSession(sessionId) {
             it.copy(
                 agentDebugRequestInFlight = false,
@@ -690,6 +690,18 @@ object BossTermSetupController {
             return CommandResult(HANDOFF_FAILED_EXIT_CODE, "Fluck debugging ended without an explicit resume")
         }
         resumeDebugAndVerifyRequested = false
+        terminalBoundarySafe = false
+        terminalStateOrNull()?.sendInput(byteArrayOf(0x03), terminalId)
+        delay(TERMINAL_BOUNDARY_PROBE_DELAY_MS)
+        val boundary = withTimeoutOrNull(HANDOFF_BOUNDARY_TIMEOUT_MS) {
+            runCommand(if (TargetOs.current().isWindows) "\$null = 0" else ":", sessionId)
+        }
+        if (boundary?.exitCode != 0 || !terminalBoundarySafe) {
+            return CommandResult(
+                HANDOFF_FAILED_EXIT_CODE,
+                "Could not confirm that the terminal returned to its shell after Fluck debugging",
+            )
+        }
         val verification = plan.verificationCommand
             ?: return CommandResult(HANDOFF_FAILED_EXIT_CODE, "This setup step has no safe verification command")
         updateSession(sessionId) { it.copy(agentDebugAwaitingVerification = true) }
@@ -758,16 +770,6 @@ object BossTermSetupController {
                 delay(TERMINAL_READY_POLL_MS)
             }
         }
-    }
-
-    private fun terminalExited(sessionId: String, exitCode: Int) {
-        if (_state.value.sessionId != sessionId) return
-        val pending = synchronized(terminalLock) {
-            pendingTerminalCommand.also { pendingTerminalCommand = null }
-        }
-        pending?.completion?.complete(
-            CommandResult(exitCode.takeIf { it != 0 } ?: -1, "Interactive terminal exited"),
-        )
     }
 
     /** Harmless task-runner seam for PTY lifecycle tests; callers supply the complete test script. */
@@ -907,7 +909,11 @@ object BossTermSetupController {
                         "Verify ${assistant.displayName}",
                         if (installed.isAiInstalled(id)) "Already installed" else "Install ${assistant.displayName}",
                     ),
-                    command(nothingElse.copy(aiAssistants = setOf(id))),
+                    withShellEnvironment(
+                        command(nothingElse.copy(aiAssistants = setOf(id))),
+                        configuredShell,
+                        targetOs,
+                    ),
                     assistantVerification(
                         assistant.command,
                         assistant.resolvedDetectPaths(System.getProperty("user.home").orEmpty()),
@@ -918,10 +924,16 @@ object BossTermSetupController {
         )
     }
 
-    private fun resolveConfiguredShell(choice: ShellChoice, targetOs: TargetOs): ShellChoice {
+    internal fun resolveConfiguredShell(
+        choice: ShellChoice,
+        targetOs: TargetOs,
+        currentShell: String = System.getenv("SHELL").orEmpty(),
+    ): ShellChoice {
         if (choice != ShellChoice.KEEP_CURRENT) return choice
-        val current = System.getenv("SHELL").orEmpty().substringAfterLast('/')
-        return ShellChoice.entries.firstOrNull { it.command.substringBefore('.') == current }
+        val current = currentShell.substringAfterLast('/')
+        return ShellChoice.entries.firstOrNull {
+            it != ShellChoice.KEEP_CURRENT && current.isNotEmpty() && it.command.substringBefore('.') == current
+        }
             ?: if (targetOs.isWindows) ShellChoice.POWERSHELL else ShellChoice.ZSH
     }
 
@@ -1119,7 +1131,7 @@ object BossTermSetupController {
             ShellChoice.BASH -> "\$HOME/.bashrc"
             ShellChoice.FISH -> "\$HOME/.config/fish/config.fish"
             ShellChoice.POWERSHELL, ShellChoice.CMD ->
-                "(Join-Path \$env:USERPROFILE 'Documents/PowerShell/Microsoft.PowerShell_profile.ps1')"
+                "\$PROFILE.CurrentUserCurrentHost"
             ShellChoice.KEEP_CURRENT -> "\$HOME/.zshrc"
         }
         return if (targetOs.isWindows) {
@@ -1169,7 +1181,7 @@ object BossTermSetupController {
                         "\$__bossExit = if (-not \$?) { 1 } elseif (\$null -eq \$LASTEXITCODE) { 0 } else { \$LASTEXITCODE }\n" +
                         "Write-Output ('__BOSS_SETUP_${token}__:' + \$__bossExit)\n",
                 )
-                "powershell.exe -NoProfile -File \"${wrapper.absolutePath}\""
+                "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"${wrapper.absolutePath}\""
             } else {
                 wrapper.writeText(
                     "#!/bin/bash\n" +
@@ -1312,6 +1324,7 @@ object BossTermSetupController {
     private const val TIMEOUT_EXIT_CODE = 124
     private const val HANDOFF_FAILED_EXIT_CODE = 125
     private const val HANDOFF_BOUNDARY_TIMEOUT_MS = 5_000L
+    private const val TERMINAL_BOUNDARY_PROBE_DELAY_MS = 150L
     private val USER_CANCEL_EXIT_CODES = setOf(TIMEOUT_EXIT_CODE, HANDOFF_FAILED_EXIT_CODE, 130, 143)
     private const val MAX_VISIBLE_LINES = 80
     private const val MAX_VISIBLE_LINE_LENGTH = 500

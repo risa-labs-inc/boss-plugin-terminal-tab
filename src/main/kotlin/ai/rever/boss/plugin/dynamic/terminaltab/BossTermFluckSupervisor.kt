@@ -150,7 +150,12 @@ internal class BossTermFluckSupervisor(private val context: PluginContext) : Bos
     private fun publish(eventName: String, payload: Map<String, Any?>) {
         if (disposed) return
         runCatching {
-            context.applicationEventBus?.publish(CustomPluginEvent(TERMINAL_PLUGIN_ID, eventName, payload))
+            val bus = context.applicationEventBus
+            if (bus == null) {
+                logger.warn(LogCategory.TERMINAL, "Cannot publish BOSS Term setup event: host event bus is unavailable")
+                return
+            }
+            bus.publish(CustomPluginEvent(TERMINAL_PLUGIN_ID, eventName, payload))
         }.onFailure { error ->
             logger.warn(LogCategory.TERMINAL, "Failed to publish BOSS Term setup event", error = error)
         }

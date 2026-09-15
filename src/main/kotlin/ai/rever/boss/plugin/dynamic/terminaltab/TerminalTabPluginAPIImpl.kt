@@ -316,7 +316,14 @@ class TerminalTabPluginAPIImpl(
 
     @Composable
     override fun TerminalOnboardingWizard(onDismiss: () -> Unit, onComplete: () -> Unit) {
-        val windowId = LocalWindowIdProvider.current?.getWindowId() ?: return
+        val windowId = LocalWindowIdProvider.current?.getWindowId()
+        if (windowId == null) {
+            LaunchedEffect(Unit) {
+                logger.warn(LogCategory.TERMINAL, "Cannot open setup without a host window id")
+                onDismiss()
+            }
+            return
+        }
         val ownerToken = remember { UUID.randomUUID().toString() }
         var ownsRenderer by remember(ownerToken) { mutableStateOf<Boolean?>(null) }
         DisposableEffect(windowId, ownerToken) {
