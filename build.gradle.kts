@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.zip.ZipFile
 
 plugins {
     kotlin("jvm") version "2.3.0"
@@ -130,6 +131,9 @@ val bossPluginApiPath = "../boss-plugin-api"
 
 // BossTerm version is now private to this plugin. Bumping bossterm only
 // requires re-releasing this plugin, not BossConsole.
+// The onboarding bridge requires BossTerm PR #388. The production version below is a
+// pending release target, not a published dependency. Review builds use the immutable
+// source pin through scripts/test-onboarding.sh; confirm the actual release before merging.
 // 1.2.155: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.155.md).
 // 1.2.154: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.154.md).
 // 1.2.153: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.153.md).
@@ -192,9 +196,11 @@ val bossPluginApiPath = "../boss-plugin-api"
 // command palette, workflows, history search, session restore; compose-ui
 // compiles with -Xjvm-default=all (no $DefaultImpls bridges). 1.1.101 added
 // the `bossterm.settings.dir` relocation hook this plugin relies on.
-val bosstermVersion = "1.2.155"
+val bosstermVersion = providers.gradleProperty("bosstermVersion").orElse("1.2.156").get()
 
 repositories {
+    providers.gradleProperty("bosstermMavenRepo").orNull?.let { maven { url = uri(it) } }
+    if (providers.gradleProperty("useLocalBossTerm").orNull == "true") mavenLocal()
     google()
     mavenCentral()
     maven("https://maven.pkg.jetbrains.space/public/p/compose/dev")
@@ -276,6 +282,14 @@ tasks.withType<Test>().configureEach {
     useJUnitPlatform()
 }
 
+// The standard lifecycle `jar` task used to write the same filename as buildPluginJar. Whichever
+// task finished last silently won, so `build` could publish a valid-looking 245 KB plugin with none
+// of BossTerm inside it. Keep the diagnostic thin artifact, but give it a name that cannot replace
+// the installable plugin.
+tasks.jar {
+    archiveClassifier.set("thin")
+}
+
 // Task to build plugin JAR with compiled classes + bossterm-compose bundled.
 tasks.register<Jar>("buildPluginJar") {
     archiveFileName.set("boss-plugin-terminal-tab-${version}.jar")
@@ -348,6 +362,22 @@ tasks.register<Jar>("buildPluginJar") {
                 jar.path.replace('\\', '/').contains("/com.google.zxing/")
         }.map { zipTree(it) }
     })
+
+    doLast {
+        val pluginJar = archiveFile.get().asFile
+        val requiredEntries = listOf(
+            "ai/rever/bossterm/compose/onboarding/BossTermSetupController.class",
+            "ai/rever/bossterm/compose/EmbeddableTerminalKt.class",
+            "com/pty4j/PtyProcess.class",
+            "com/sun/jna/Native.class",
+        )
+        ZipFile(pluginJar).use { zip ->
+            val missing = requiredEntries.filter { zip.getEntry(it) == null }
+            check(missing.isEmpty()) {
+                "Installable Terminal Tab JAR is missing bundled runtime entries: ${missing.joinToString()}"
+            }
+        }
+    }
 }
 
 // Sync version from build.gradle.kts into plugin.json (single source of truth).

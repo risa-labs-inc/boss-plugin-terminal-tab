@@ -46,6 +46,6 @@ jobs:
       # the one downloaded above. Actions sets it anyway; set explicitly so the
       # dependency is visible rather than inherited.
       - name: Compile and run tests
-        run: ./gradlew test --no-daemon
+        run: bash scripts/test-onboarding.sh
         env:
           CI: 'true'

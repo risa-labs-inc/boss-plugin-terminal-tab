@@ -9,11 +9,14 @@ import ai.rever.boss.plugin.logging.LogCategory
 import ai.rever.bossterm.compose.mcp.BossTermMcpConfig
 import ai.rever.bossterm.compose.mcp.BossTermMcpManager
 import ai.rever.bossterm.compose.mcp.McpTerminalRegistry
+import ai.rever.bossterm.compose.onboarding.BossTermSetupController
 import ai.rever.bossterm.compose.settings.SettingsManager
 import ai.rever.bossterm.compose.share.SessionShareManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
@@ -55,6 +58,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
 
     private var pluginContext: PluginContext? = null
     private var terminalApi: TerminalTabPluginAPIImpl? = null
+    private var setupStatusJob: Job? = null
 
     // BossTerm MCP server lifecycle. Constructed once per JVM in register();
     // exposes every terminal tab (registered via TabbedTerminalStateRegistry →
@@ -98,6 +102,20 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         neutralizeStalePty4jNativeFolder()
 
         pluginContext = context
+        val setupSupervisor = BossTermFluckSupervisor(context)
+        TerminalPluginContextHolder.setupSupervisor = setupSupervisor
+        val setupStatusItem = BossTermSetupStatusItem(SettingsManager.instance, setupSupervisor)
+        setupStatusJob = context.pluginScope.launch {
+            var registered = false
+            BossTermSetupController.state.collect { state ->
+                registered = updateSetupStatusRegistration(
+                    hasSession = state.sessionId != null,
+                    isRegistered = registered,
+                    register = { context.registerStatusBarItem(setupStatusItem) },
+                    unregister = { context.unregisterStatusBarItem(BossTermSetupStatusItem.ITEM_ID) },
+                )
+            }
+        }
 
         // Create and register the terminal API implementation
         terminalApi = TerminalTabPluginAPIImpl(context)
@@ -372,6 +390,10 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         mcpServerController = null
         mcpManager = null
         TerminalMcpConfigHolder.config = null
+        setupStatusJob?.cancel()
+        setupStatusJob = null
+        pluginContext?.unregisterStatusBarItem(BossTermSetupStatusItem.ITEM_ID)
+        TerminalPluginContextHolder.setupSupervisor = null
         // Drop the registry reference so a disposed host registry isn't held by the
         // process-wide voice source across a disable/update cycle. The source itself
         // survives (it is stateless) and simply offers the two host tools until a
@@ -383,4 +405,15 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         terminalApi = null
         pluginContext = null
     }
+}
+
+internal inline fun updateSetupStatusRegistration(
+    hasSession: Boolean,
+    isRegistered: Boolean,
+    register: () -> Unit,
+    unregister: () -> Unit,
+): Boolean {
+    if (hasSession == isRegistered) return isRegistered
+    if (hasSession) register() else unregister()
+    return hasSession
 }

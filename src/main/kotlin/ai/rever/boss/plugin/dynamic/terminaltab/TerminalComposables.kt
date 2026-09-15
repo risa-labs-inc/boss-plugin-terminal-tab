@@ -158,10 +158,13 @@ internal fun TabbedTerminalContentImpl(
     }
 
     if (showWelcomeWizard) {
+        ApplyHostThemeToTerminal()
         OnboardingWizard(
             onDismiss = { showWelcomeWizard = false },
             onComplete = { showWelcomeWizard = false },
-            settingsManager = SettingsManager.instance
+            settingsManager = SettingsManager.instance,
+            supervisor = TerminalPluginContextHolder.setupSupervisor,
+            canRunInBackground = true,
         )
     }
 }
@@ -298,10 +301,13 @@ internal fun PersistentTabbedTerminalContentImpl(
     }
 
     if (showWelcomeWizard) {
+        ApplyHostThemeToTerminal()
         OnboardingWizard(
             onDismiss = { showWelcomeWizard = false },
             onComplete = { showWelcomeWizard = false },
-            settingsManager = SettingsManager.instance
+            settingsManager = SettingsManager.instance,
+            supervisor = TerminalPluginContextHolder.setupSupervisor,
+            canRunInBackground = true,
         )
     }
 }

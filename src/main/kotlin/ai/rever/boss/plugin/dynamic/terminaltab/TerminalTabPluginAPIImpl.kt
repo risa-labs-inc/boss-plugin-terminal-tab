@@ -309,10 +309,13 @@ class TerminalTabPluginAPIImpl(
 
     @Composable
     override fun TerminalOnboardingWizard(onDismiss: () -> Unit, onComplete: () -> Unit) {
+        ApplyHostThemeToTerminal()
         OnboardingWizard(
             onDismiss = onDismiss,
             onComplete = onComplete,
-            settingsManager = SettingsManager.instance
+            settingsManager = SettingsManager.instance,
+            supervisor = TerminalPluginContextHolder.setupSupervisor,
+            canRunInBackground = true,
         )
     }
 

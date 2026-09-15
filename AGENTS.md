@@ -8,7 +8,7 @@ Terminal tab using BossTerm library for terminal emulation
 
 - **Plugin ID**: `ai.rever.boss.plugin.dynamic.terminaltab`
 - **Main Class**: `ai.rever.boss.plugin.dynamic.terminaltab.TerminalTabDynamicPlugin`
-- **API Version**: 1.0.20
+- **API Version**: 1.0.89 (status-bar setup progress and reopen support)
 
 ## Essential Commands
 
