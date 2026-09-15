@@ -2,6 +2,7 @@ package ai.rever.boss.plugin.dynamic.terminaltab.onboarding
 
 import ai.rever.boss.plugin.dynamic.terminaltab.TabbedTerminalStateRegistry
 import ai.rever.bossterm.compose.TabbedTerminal
+import ai.rever.bossterm.compose.mcp.McpTerminalRegistry
 import ai.rever.bossterm.compose.settings.TerminalSettingsOverride
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.LaunchedEffect
@@ -46,6 +47,11 @@ class BossTermSetupHandoffStateTest {
                 debugRequest.set(request)
                 onAccepted()
                 assertTrue(BossTermSetupController.hasSetupTerminalHandoff(request.terminalId, request.requestId))
+                assertEquals(
+                    null,
+                    McpTerminalRegistry.findTab(request.terminalId),
+                    "setup PTY must stay hidden from generic MCP tools during handoff",
+                )
                 assertTrue(
                     BossTermSetupController.sendSetupTerminalInput(
                         request.terminalId,

@@ -38,6 +38,11 @@ class SetupTerminalMcpToolTest {
     }
 
     @Test
+    fun `dynamic plugins cannot shadow guarded setup tool names`() {
+        assertTrue(RESERVED_TOOL_NAMES.containsAll(setupTerminalMcpToolDefs.map { it.name }))
+    }
+
+    @Test
     fun `all setup schemas require terminal and handoff request ids`() {
         for (name in setupTerminalMcpToolDefs.map { it.name }) {
             val schema = server().tools.getValue(name).tool.inputSchema.toString()

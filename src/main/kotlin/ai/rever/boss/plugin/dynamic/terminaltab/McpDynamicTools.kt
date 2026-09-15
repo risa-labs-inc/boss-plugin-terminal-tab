@@ -58,7 +58,7 @@ internal val bossTermOwnToolNames: Set<String> = (
  * shadow one of these, so the bridge skips them.
  */
 internal val RESERVED_TOOL_NAMES: Set<String> =
-    bossTermOwnToolNames + bossHostMcpToolDefs.map { it.name }
+    bossTermOwnToolNames + (bossHostMcpToolDefs + setupTerminalMcpToolDefs).map { it.name }
 
 /**
  * The single active registry→server sync coroutine. The MCP engine may stop and

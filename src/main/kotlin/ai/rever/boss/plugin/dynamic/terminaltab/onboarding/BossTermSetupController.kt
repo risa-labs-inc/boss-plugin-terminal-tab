@@ -657,11 +657,8 @@ object BossTermSetupController {
             ?: return handoffFailure(sessionId, "Fluck handoff request is unavailable")
         val windowId = terminalWindowId
             ?: return handoffFailure(sessionId, "Setup window is unavailable")
-        // The click authorized this exact request. Publish its real tab to MCP before the host
-        // queues Fluck's prompt, otherwise a fast agent can receive the prompt before the later
-        // opened acknowledgement reaches this controller. Dedicated setup tools remain guarded
-        // by the request token; MCP exposure is revoked before setup resumes.
-        synchronized(terminalLock) { terminalStateOrNull()?.let(McpTerminalRegistry::register) }
+        // The dedicated setup tools resolve this terminal through the controller and require this
+        // request token. Keep the setup PTY out of the generic MCP registry throughout handoff.
         val result = runCatching {
             supervisor?.debugAndFix(
                 SetupDebugRequest(
@@ -684,7 +681,7 @@ object BossTermSetupController {
             } ?: SetupDebugResult(false, "Fluck debugging is unavailable")
         }.getOrElse { SetupDebugResult(false, it.message ?: "Fluck debugging failed") }
         val resumeWasRequested = resumeDebugAndVerifyRequested
-        // Revoke both guarded and generic MCP writes before verification enters this PTY queue.
+        // Revoke guarded MCP writes before verification enters this PTY queue.
         synchronized(terminalLock) {
             terminalStateOrNull()?.let(McpTerminalRegistry::unregister)
             activeHandoffRequestId = null
@@ -754,9 +751,7 @@ object BossTermSetupController {
         terminalReadyMarker = readyMarker
         terminalReadyCommand = if (TargetOs.current().isWindows) "echo $readyMarker" else "printf '\\n$readyMarker\\n'"
         val terminal = TabbedTerminalStateRegistry.getOrCreate(windowId, containerId)
-        // The install terminal is exposed to generic BOSS MCP tools only during an accepted Fluck
-        // handoff. Local setup commands remain private; revocation prevents new MCP lookups before
-        // verification (an operation that already resolved the terminal must still finish first).
+        // Setup commands remain private to the dedicated, request-token-guarded MCP tools.
         McpTerminalRegistry.unregister(terminal)
         updateSession(sessionId) {
             it.copy(setupTerminalContainerId = containerId, setupTerminalId = null)

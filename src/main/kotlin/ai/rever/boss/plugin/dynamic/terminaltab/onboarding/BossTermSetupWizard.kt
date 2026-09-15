@@ -76,7 +76,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.rememberWindowState
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 /** The compact, confirmation-first BOSS Term setup shown by both the app and Terminal Tab. */
 @Composable
@@ -97,29 +100,44 @@ fun OnboardingWizard(
     var installGitHubCli by remember { mutableStateOf(true) }
     var authenticateGitHub by remember { mutableStateOf(false) }
     var aiAssistants by remember { mutableStateOf(AIAssistants.DEFAULT_ONBOARDING_SELECTION) }
+    var detectionAttempt by remember { mutableStateOf(0) }
+    var detectionError by remember { mutableStateOf<String?>(null) }
+    var startError by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(Unit) {
-        installed = detectInstalledTools().let { detected ->
-            InstalledTools(
-                zsh = detected.zsh,
-                bash = detected.bash,
-                fish = detected.fish,
-                powershell = detected.powershell,
-                cmd = detected.cmd,
-                winget = detected.winget,
-                chocolatey = detected.chocolatey,
-                homebrew = detected.homebrew,
-                starship = detected.starship,
-                ohMyZsh = detected.ohMyZsh,
-                prezto = detected.prezto,
-                ohMyPosh = detected.ohMyPosh,
-                git = detected.git,
-                gh = detected.gh,
-                aiAssistants = detected.aiAssistants,
-            )
-        }.also { tools ->
+    LaunchedEffect(detectionAttempt) {
+        installed = null
+        detectionError = null
+        startError = null
+        try {
+            val tools = withContext(Dispatchers.IO) {
+                detectInstalledTools().let { detected ->
+                    InstalledTools(
+                        zsh = detected.zsh,
+                        bash = detected.bash,
+                        fish = detected.fish,
+                        powershell = detected.powershell,
+                        cmd = detected.cmd,
+                        winget = detected.winget,
+                        chocolatey = detected.chocolatey,
+                        homebrew = detected.homebrew,
+                        starship = detected.starship,
+                        ohMyZsh = detected.ohMyZsh,
+                        prezto = detected.prezto,
+                        ohMyPosh = detected.ohMyPosh,
+                        git = detected.git,
+                        gh = detected.gh,
+                        aiAssistants = detected.aiAssistants,
+                    )
+                }
+            }
+            installed = tools
             aiAssistants += tools.aiAssistants.filterValues { it }.keys
             prompt = defaultPromptChoice(shell)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            detectionError = error.message?.takeIf { it.isNotBlank() }
+                ?: "BOSS Term could not inspect the installed terminal tools."
         }
     }
 
@@ -200,6 +218,35 @@ fun OnboardingWizard(
                         onComplete()
                     },
                 )
+            } else if (detectionError != null) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(
+                        modifier = Modifier.padding(40.dp).testTag("setup-detection-error"),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text("We couldn't check this computer", color = TextPrimary, fontSize = 20.sp)
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            detectionError.orEmpty(),
+                            color = TextSecondary,
+                            fontSize = 13.sp,
+                            lineHeight = 18.sp,
+                        )
+                        Spacer(Modifier.height(18.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(onClick = ::finishWithoutSetup) { Text("Not now", color = TextSecondary) }
+                            Spacer(Modifier.width(12.dp))
+                            Button(
+                                onClick = { detectionAttempt += 1 },
+                                colors = ButtonDefaults.buttonColors(
+                                    backgroundColor = AccentColor,
+                                    contentColor = TextOnAccent,
+                                ),
+                                modifier = Modifier.testTag("setup-detection-retry"),
+                            ) { Text("Retry") }
+                        }
+                    }
+                }
             } else if (installed == null) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -229,6 +276,7 @@ fun OnboardingWizard(
                     authenticateGitHub = authenticateGitHub,
                     aiAssistants = aiAssistants,
                     fluckBridgeAvailable = supervisor != null,
+                    startError = startError,
                     onShellChange = {
                         shell = it
                         if (prompt !in availablePromptChoices(it)) {
@@ -254,13 +302,16 @@ fun OnboardingWizard(
                     onAiAssistantsChange = { aiAssistants = it },
                     onNotNow = ::finishWithoutSetup,
                     onStart = {
-                        BossTermSetupController.start(
+                        startError = null
+                        if (!BossTermSetupController.start(
                             windowId = windowId,
                             selections = selections,
                             installed = requireNotNull(installed),
                             settingsManager = settingsManager,
                             supervisor = supervisor,
-                        )
+                        )) {
+                            startError = "Setup could not start. Review the selections and try again."
+                        }
                     },
                 )
             }
@@ -346,6 +397,7 @@ internal fun SetupConfirmation(
     authenticateGitHub: Boolean,
     aiAssistants: Set<String>,
     fluckBridgeAvailable: Boolean,
+    startError: String?,
     onShellChange: (ShellChoice) -> Unit,
     onPackageManagerChange: (PackageManagerChoice) -> Unit,
     onPromptChange: (ShellCustomizationChoice) -> Unit,
@@ -427,6 +479,15 @@ internal fun SetupConfirmation(
                     unhoverColor = TextSecondary.copy(alpha = 0.65f),
                     hoverColor = AccentColor,
                 ),
+            )
+        }
+        if (startError != null) {
+            Text(
+                startError,
+                color = Color(0xFFE39A42),
+                fontSize = 11.sp,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 40.dp, vertical = 4.dp)
+                    .testTag("setup-start-error"),
             )
         }
         Row(
