@@ -16,7 +16,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import java.net.URLEncoder
-import ai.rever.bossterm.compose.onboarding.BossTermSetupController
+import ai.rever.boss.plugin.dynamic.terminaltab.onboarding.BossTermSetupController
 import ai.rever.bossterm.compose.settings.SettingsManager
 
 private val hostToolsLogger = BossLogger.forComponent("TerminalTabMcpHostTools")
@@ -24,6 +24,7 @@ private val hostToolsLogger = BossLogger.forComponent("TerminalTabMcpHostTools")
 internal interface SetupTerminalToolBridge {
     fun id(): String?
     fun exists(id: String): Boolean
+    fun acceptsRequest(id: String, requestId: String): Boolean
     fun activity(id: String): String
     fun read(id: String, lines: Int): Pair<List<String>, Int>?
     fun input(id: String, requestId: String, bytes: ByteArray): Boolean
@@ -35,9 +36,11 @@ internal interface SetupTerminalToolBridge {
 private object ControllerSetupTerminalToolBridge : SetupTerminalToolBridge {
     override fun id() = BossTermSetupController.state.value.setupTerminalId
     override fun exists(id: String) = BossTermSetupController.hasSetupTerminal(id)
+    override fun acceptsRequest(id: String, requestId: String) =
+        BossTermSetupController.hasSetupTerminalHandoff(id, requestId)
     override fun activity(id: String) = BossTermSetupController.setupTerminalActivity(id).name.lowercase()
     override fun read(id: String, lines: Int) = BossTermSetupController.setupTerminalScrollback(id, lines)
-        ?.let { it.lines to it.totalAvailable }
+        ?.let { it.lines to it.totalLines }
     override fun input(id: String, requestId: String, bytes: ByteArray) =
         BossTermSetupController.sendSetupTerminalInput(id, requestId, bytes)
     override fun interrupt(id: String, requestId: String) = BossTermSetupController.interruptSetupTerminal(id, requestId)
@@ -153,8 +156,9 @@ private const val SETUP_SIGNAL_DESCRIPTION =
     "Send a control signal to a BOSS Term setup terminal during an accepted Fluck debugging handoff."
 
 private fun setupStatusSchema() = ToolSchema(properties = buildJsonObject {
-    putJsonObject("terminal_id") { put("type", "string"); put("description", "Optional terminal id to validate.") }
-}, required = emptyList())
+    putJsonObject("terminal_id") { put("type", "string"); put("description", "Setup terminal id from the handoff.") }
+    putJsonObject("request_id") { put("type", "string"); put("description", "Exact active handoff request id.") }
+}, required = listOf("terminal_id", "request_id"))
 
 private fun setupReadSchema() = ToolSchema(properties = buildJsonObject {
     putJsonObject("terminal_id") { put("type", "string") }
@@ -175,10 +179,10 @@ private fun setupSignalSchema() = ToolSchema(properties = buildJsonObject {
 
 private suspend fun setupStatus(args: JsonObject): CallToolResult {
     if (!setupToolEnabled("setup_terminal_status")) return errorResult("setup_terminal_status is disabled in MCP settings.")
-    val requested = args.str("terminal_id")
-    val id = requested ?: setupTerminalToolBridge.id()
-        ?: return errorResult("No live BOSS Term setup terminal.")
+    val id = args.str("terminal_id") ?: return errorResult("terminal_id is required.")
+    val requestId = args.str("request_id") ?: return errorResult("request_id is required.")
     if (!setupTerminalToolBridge.exists(id)) return errorResult("Setup terminal is unavailable or stale.")
+    if (!setupTerminalToolBridge.acceptsRequest(id, requestId)) return errorResult("Setup handoff is unavailable or stale.")
     return jsonResult(false) {
         put("ok", true)
         put("terminalId", id)

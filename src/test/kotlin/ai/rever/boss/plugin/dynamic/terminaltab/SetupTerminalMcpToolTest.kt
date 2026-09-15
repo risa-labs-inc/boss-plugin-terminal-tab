@@ -71,6 +71,8 @@ class SetupTerminalMcpToolTest {
         setupTerminalToolBridge = object : SetupTerminalToolBridge {
             override fun id() = "live-pty"
             override fun exists(id: String) = id == "live-pty"
+            override fun acceptsRequest(id: String, requestId: String) =
+                id == "live-pty" && requestId == "accepted-request"
             override fun activity(id: String) = "handoff"
             override fun read(id: String, lines: Int) = listOf("READY", "prompt") to 2
             override fun input(id: String, requestId: String, bytes: ByteArray): Boolean {

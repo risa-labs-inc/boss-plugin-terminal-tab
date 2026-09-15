@@ -12,7 +12,6 @@ import ai.rever.bossterm.compose.rememberEmbeddableTerminalState
 import ai.rever.bossterm.compose.settings.SettingsManager
 import ai.rever.bossterm.compose.settings.TerminalSettingsOverride
 import ai.rever.bossterm.compose.share.SessionShareManager
-import ai.rever.bossterm.compose.onboarding.OnboardingWizard
 import ai.rever.boss.plugin.api.LocalIsPanelActive
 import ai.rever.boss.plugin.api.LocalWindowIdProvider
 import androidx.compose.foundation.layout.fillMaxSize
@@ -68,9 +67,8 @@ internal fun TabbedTerminalContentImpl(
     val sidebarSettings = remember { TerminalSettingsOverride(alwaysShowTabBar = true) }
     val effectiveWorkingDir = pendingCommand?.workingDirectory ?: workingDirectory
 
-    var showWelcomeWizard by remember { mutableStateOf(false) }
     LaunchedEffect(settings.onboardingCompleted) {
-        if (!settings.onboardingCompleted) showWelcomeWizard = true
+        if (!settings.onboardingCompleted) TerminalPluginContextHolder.setupSupervisor?.requestSetup(windowId)
     }
 
     // Register the first tab's ID using session listener
@@ -143,7 +141,9 @@ internal fun TabbedTerminalContentImpl(
                         }
                     },
                     onShowSettings = onShowSettings,
-                    onShowWelcomeWizard = { showWelcomeWizard = true },
+                    onShowWelcomeWizard = {
+                        TerminalPluginContextHolder.setupSupervisor?.requestSetup(windowId)
+                    },
                     onLinkClick = { info -> handleTerminalLinkClick(info, scope, SIDEBAR_TERMINAL_ID, windowId) },
                     // Inside BossConsole the in-app voice agent is "Call Boss", and it
                     // gets the `boss` MCP surface on top of BossTerm's own thirteen
@@ -157,16 +157,6 @@ internal fun TabbedTerminalContentImpl(
         }
     }
 
-    if (showWelcomeWizard) {
-        ApplyHostThemeToTerminal()
-        OnboardingWizard(
-            onDismiss = { showWelcomeWizard = false },
-            onComplete = { showWelcomeWizard = false },
-            settingsManager = SettingsManager.instance,
-            supervisor = TerminalPluginContextHolder.setupSupervisor,
-            canRunInBackground = true,
-        )
-    }
 }
 
 /**
@@ -201,9 +191,8 @@ internal fun PersistentTabbedTerminalContentImpl(
     val state = remember(terminalId, resetGeneration) { TabbedTerminalStateRegistry.getOrCreate(windowId, terminalId) }
     val effectiveWorkingDir = if (isNew) workingDirectory else null
 
-    var showWelcomeWizard by remember { mutableStateOf(false) }
     LaunchedEffect(settings.onboardingCompleted) {
-        if (!settings.onboardingCompleted) showWelcomeWizard = true
+        if (!settings.onboardingCompleted) TerminalPluginContextHolder.setupSupervisor?.requestSetup(windowId)
     }
 
     DisposableEffect(terminalId) {
@@ -280,7 +269,9 @@ internal fun PersistentTabbedTerminalContentImpl(
                     // manager only learns about closes from the embedder).
                     onTabClose = { tabId -> SessionShareManager.onTabClosed(tabId) },
                     onShowSettings = onShowSettings,
-                    onShowWelcomeWizard = { showWelcomeWizard = true },
+                    onShowWelcomeWizard = {
+                        TerminalPluginContextHolder.setupSupervisor?.requestSetup(windowId)
+                    },
                     onWindowTitleChange = { title -> onTitleChange?.invoke(title) },
                     onLinkClick = { info ->
                         if (onLinkClick != null) {
@@ -300,16 +291,6 @@ internal fun PersistentTabbedTerminalContentImpl(
         }
     }
 
-    if (showWelcomeWizard) {
-        ApplyHostThemeToTerminal()
-        OnboardingWizard(
-            onDismiss = { showWelcomeWizard = false },
-            onComplete = { showWelcomeWizard = false },
-            settingsManager = SettingsManager.instance,
-            supervisor = TerminalPluginContextHolder.setupSupervisor,
-            canRunInBackground = true,
-        )
-    }
 }
 
 /**

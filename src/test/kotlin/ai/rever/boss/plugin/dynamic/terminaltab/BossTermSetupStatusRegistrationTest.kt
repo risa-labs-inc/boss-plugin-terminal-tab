@@ -1,6 +1,6 @@
 package ai.rever.boss.plugin.dynamic.terminaltab
 
-import ai.rever.bossterm.compose.onboarding.BossTermSetupState
+import ai.rever.boss.plugin.dynamic.terminaltab.onboarding.BossTermSetupState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

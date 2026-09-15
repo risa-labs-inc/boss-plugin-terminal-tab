@@ -1,6 +1,8 @@
 package ai.rever.boss.plugin.dynamic.terminaltab
 
+import ai.rever.boss.plugin.dynamic.terminaltab.onboarding.BossTermSetupController
 import ai.rever.boss.plugin.api.PendingSidebarCommand
+import ai.rever.boss.plugin.api.LocalWindowIdProvider
 import ai.rever.boss.plugin.api.PluginContext
 import ai.rever.boss.plugin.api.TerminalSessionEvent
 import ai.rever.boss.plugin.api.TerminalSessionEventType
@@ -12,16 +14,19 @@ import kotlinx.coroutines.flow.flowOf
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
 import ai.rever.bossterm.compose.mcp.LocalBossTermMcpConfig
-import ai.rever.bossterm.compose.onboarding.OnboardingWizard
+import ai.rever.boss.plugin.dynamic.terminaltab.onboarding.OnboardingWizard
 import ai.rever.bossterm.compose.settings.SettingsManager
 import ai.rever.bossterm.compose.settings.SettingsPanel
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import kotlinx.coroutines.flow.StateFlow
+import java.util.UUID
 
 private val logger = BossLogger.forComponent("TerminalTabPluginAPIImpl")
 
@@ -309,8 +314,29 @@ class TerminalTabPluginAPIImpl(
 
     @Composable
     override fun TerminalOnboardingWizard(onDismiss: () -> Unit, onComplete: () -> Unit) {
+        val windowId = LocalWindowIdProvider.current?.getWindowId() ?: return
+        val ownerToken = remember { UUID.randomUUID().toString() }
+        val ownsRenderer = remember(windowId, ownerToken) {
+            SetupWizardRendererOwnership.claim(ownerToken, windowId)
+        }
+        DisposableEffect(ownerToken, ownsRenderer) {
+            onDispose {
+                if (ownsRenderer) SetupWizardRendererOwnership.release(ownerToken)
+            }
+        }
+        if (!ownsRenderer) {
+            LaunchedEffect(ownerToken) {
+                BossTermSetupController.bringToForeground()
+                onDismiss()
+            }
+            return
+        }
+        LaunchedEffect(onDismiss) {
+            BossTermSetupController.bringToForeground()
+        }
         ApplyHostThemeToTerminal()
         OnboardingWizard(
+            windowId = windowId,
             onDismiss = onDismiss,
             onComplete = onComplete,
             settingsManager = SettingsManager.instance,
@@ -620,5 +646,31 @@ class TerminalTabPluginAPIImpl(
             logger.warn(LogCategory.TERMINAL, "Failed to get active tab index flow", error = e)
             null
         }
+    }
+}
+
+/** Ensures the process-wide setup controller has exactly one Compose terminal renderer. */
+internal object SetupWizardRendererOwnership {
+    private data class Owner(val token: String, val windowId: String)
+
+    private var owner: Owner? = null
+
+    @Synchronized
+    fun claim(token: String, windowId: String): Boolean {
+        if (owner == null) owner = Owner(token, windowId)
+        return owner?.token == token
+    }
+
+    @Synchronized
+    fun release(token: String) {
+        if (owner?.token == token) owner = null
+    }
+
+    @Synchronized
+    internal fun ownerWindowId(): String? = owner?.windowId
+
+    @Synchronized
+    internal fun resetForTest() {
+        owner = null
     }
 }

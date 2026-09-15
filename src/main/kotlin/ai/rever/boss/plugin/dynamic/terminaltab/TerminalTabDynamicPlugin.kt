@@ -9,7 +9,7 @@ import ai.rever.boss.plugin.logging.LogCategory
 import ai.rever.bossterm.compose.mcp.BossTermMcpConfig
 import ai.rever.bossterm.compose.mcp.BossTermMcpManager
 import ai.rever.bossterm.compose.mcp.McpTerminalRegistry
-import ai.rever.bossterm.compose.onboarding.BossTermSetupController
+import ai.rever.boss.plugin.dynamic.terminaltab.onboarding.BossTermSetupController
 import ai.rever.bossterm.compose.settings.SettingsManager
 import ai.rever.bossterm.compose.share.SessionShareManager
 import kotlinx.coroutines.CoroutineScope
@@ -104,7 +104,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         pluginContext = context
         val setupSupervisor = BossTermFluckSupervisor(context)
         TerminalPluginContextHolder.setupSupervisor = setupSupervisor
-        val setupStatusItem = BossTermSetupStatusItem(SettingsManager.instance, setupSupervisor)
+        val setupStatusItem = BossTermSetupStatusItem()
         setupStatusJob = context.pluginScope.launch {
             var registered = false
             BossTermSetupController.state.collect { state ->

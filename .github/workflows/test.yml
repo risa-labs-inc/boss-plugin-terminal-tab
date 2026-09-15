@@ -46,6 +46,8 @@ jobs:
       # the one downloaded above. Actions sets it anyway; set explicitly so the
       # dependency is visible rather than inherited.
       - name: Compile and run tests
-        run: bash scripts/test-onboarding.sh
+        # The setup lifecycle tests render a real terminal. Provide a display
+        # on Linux and also validate the installable bundled artifact.
+        run: xvfb-run -a ./gradlew test buildPluginJar --no-daemon
         env:
           CI: 'true'
