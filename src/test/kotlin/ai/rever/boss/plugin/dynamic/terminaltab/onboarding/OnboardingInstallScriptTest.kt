@@ -72,6 +72,7 @@ class OnboardingInstallScriptTest {
 
     @Test
     fun `Unix install-plan errors safely quote apostrophes`() {
+        org.junit.jupiter.api.Assumptions.assumeFalse(isWindows, "Executes the Unix error script with a native Unix shell")
         val expected = "Error building installation command: installer isn't available"
         val script = installPlanErrorCommand("installer isn't available", TargetOs.MAC)
         val proc = ProcessBuilder("bash", "-c", script).redirectErrorStream(true).start()
