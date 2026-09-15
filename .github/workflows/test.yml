@@ -23,18 +23,13 @@ jobs:
 
       # The API is compileOnly at runtime because the host classloader provides
       # it, but compiling and testing happen outside the host, so the jar has to
-      # be on the classpath here. Resolution mirrors plugin-release.yml so CI
-      # and the release build agree on which API they are building against.
+      # be on the classpath here. Keep this literal pin aligned with build.yml
+      # and the manifest; PluginManifestTest verifies that they agree.
       - name: Download boss-plugin-api
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          API_VERSION: 'latest'
+          API_VERSION: '1.0.89'
         run: |
           set -euo pipefail
-          if [ "$API_VERSION" = "latest" ]; then
-            API_VERSION=$(gh api repos/risa-labs-inc/boss-plugin-api/releases/latest --jq '.tag_name' | sed 's/^v//')
-            echo "Resolved latest boss-plugin-api: $API_VERSION"
-          fi
           mkdir -p build/downloaded-deps
           # -f so an HTTP error is a failure rather than an error page silently
           # written to the jar path and a confusing compile error later.

@@ -128,6 +128,10 @@ kotlin {
 // Auto-detect CI environment
 val useLocalDependencies = System.getenv("CI") != "true"
 val bossPluginApiPath = "../boss-plugin-api"
+// Setup progress registration and host-owned onboarding require 1.0.89.
+// Compile against the declared minimum so newer symbols cannot silently bypass
+// the compatibility gate. Keep both workflow pins aligned with this version.
+val bossPluginApiVersion = "1.0.89"
 
 // BossTerm version is now private to this plugin. Bumping bossterm only
 // requires re-releasing this plugin, not BossConsole.
@@ -212,7 +216,7 @@ repositories {
 dependencies {
     if (useLocalDependencies) {
         // Local development: use boss-plugin-api JAR from sibling repo
-        compileOnly(files("$bossPluginApiPath/build/libs/boss-plugin-api-1.0.55.jar"))
+        compileOnly(files("$bossPluginApiPath/build/libs/boss-plugin-api-$bossPluginApiVersion.jar"))
     } else {
         // CI: use downloaded JAR
         compileOnly(files("build/downloaded-deps/boss-plugin-api.jar"))
@@ -272,7 +276,7 @@ dependencies {
     // The host supplies Skiko in production; standalone UI tests need the current OS native runtime.
     testRuntimeOnly(compose.desktop.currentOs)
     if (useLocalDependencies) {
-        testImplementation(files("$bossPluginApiPath/build/libs/boss-plugin-api-1.0.55.jar"))
+        testImplementation(files("$bossPluginApiPath/build/libs/boss-plugin-api-$bossPluginApiVersion.jar"))
     } else {
         testImplementation(files("build/downloaded-deps/boss-plugin-api.jar"))
     }
@@ -280,6 +284,12 @@ dependencies {
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+    inputs.files(".github/workflows/build.yml", ".github/workflows/test.yml")
+        .withPropertyName("apiPinWorkflows")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    systemProperty("pluginVersion", version.toString())
+    systemProperty("bossPluginApiVersion", bossPluginApiVersion)
+    systemProperty("pluginProjectDir", projectDir.absolutePath)
     val bossTermTestSettingsDir = layout.buildDirectory.dir("test-bossterm-settings").get().asFile
     systemProperty("bossterm.settings.dir", bossTermTestSettingsDir.absolutePath)
     doFirst {
