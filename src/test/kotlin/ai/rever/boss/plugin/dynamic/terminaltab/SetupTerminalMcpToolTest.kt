@@ -13,10 +13,16 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.assertFalse
 import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 
 class SetupTerminalMcpToolTest {
     private val productionBridge = setupTerminalToolBridge
-    @AfterTest fun restoreBridge() { setupTerminalToolBridge = productionBridge }
+    private val productionConfig = TerminalMcpConfigHolder.config
+    @BeforeTest fun configureTools() { TerminalMcpConfigHolder.config = BossTermMcpConfig(additionalTools = bossHostMcpTools) }
+    @AfterTest fun restoreBridge() {
+        setupTerminalToolBridge = productionBridge
+        TerminalMcpConfigHolder.config = productionConfig
+    }
     private fun server() = BossTermMcpServer(
         config = BossTermMcpConfig(additionalTools = bossHostMcpTools),
     ).createServer()
@@ -31,12 +37,19 @@ class SetupTerminalMcpToolTest {
     }
 
     @Test
-    fun `write schemas require terminal and handoff request ids`() {
-        for (name in listOf("setup_terminal_send_input", "setup_terminal_send_signal")) {
+    fun `all setup schemas require terminal and handoff request ids`() {
+        for (name in setupTerminalMcpToolDefs.map { it.name }) {
             val schema = server().tools.getValue(name).tool.inputSchema.toString()
             assertTrue(schema.contains("terminal_id"), schema)
             assertTrue(schema.contains("request_id"), schema)
         }
+    }
+
+    @Test
+    fun `missing config denies setup writes`() {
+        TerminalMcpConfigHolder.config = null
+        assertFalse(server().tools.containsKey("setup_terminal_send_input"))
+        assertFalse(server().tools.containsKey("setup_terminal_send_signal"))
     }
 
     @Test
@@ -68,13 +81,15 @@ class SetupTerminalMcpToolTest {
     @Test
     fun `actual endpoint routes valid read and token guarded input to setup PTY bridge`() {
         val writes = mutableListOf<String>()
+        var handoffActive = true
         setupTerminalToolBridge = object : SetupTerminalToolBridge {
             override fun id() = "live-pty"
             override fun exists(id: String) = id == "live-pty"
             override fun acceptsRequest(id: String, requestId: String) =
-                id == "live-pty" && requestId == "accepted-request"
+                handoffActive && id == "live-pty" && requestId == "accepted-request"
             override fun activity(id: String) = "handoff"
-            override fun read(id: String, lines: Int) = listOf("READY", "prompt") to 2
+            override fun read(id: String, requestId: String, lines: Int) =
+                if (acceptsRequest(id, requestId)) listOf("READY", "prompt") to 2 else null
             override fun input(id: String, requestId: String, bytes: ByteArray): Boolean {
                 if (id != "live-pty" || requestId != "accepted-request") return false
                 writes += bytes.toString(Charsets.UTF_8)
@@ -88,12 +103,26 @@ class SetupTerminalMcpToolTest {
         fun call(name: String, args: kotlinx.serialization.json.JsonObject) = runBlocking {
             mcp.tools.getValue(name).handler(CallToolRequest(CallToolRequestParams(name = name, arguments = args)))
         }
-        val read = call("setup_terminal_read", buildJsonObject { put("terminal_id", "live-pty"); put("lines", 20) })
+        val readArguments = buildJsonObject {
+            put("terminal_id", "live-pty"); put("request_id", "accepted-request"); put("lines", 20)
+        }
+        val read = call("setup_terminal_read", readArguments)
         assertTrue(read.content.joinToString().contains("READY"), read.toString())
         val write = call("setup_terminal_send_input", buildJsonObject {
             put("terminal_id", "live-pty"); put("request_id", "accepted-request"); put("text", "answer\r")
         })
         assertEquals(false, write.isError)
         assertEquals(listOf("answer\r"), writes)
+        val oversized = call("setup_terminal_send_input", buildJsonObject {
+            put("terminal_id", "live-pty"); put("request_id", "accepted-request"); put("text", "é".repeat(9_000))
+        })
+        assertEquals(true, oversized.isError)
+        assertEquals(listOf("answer\r"), writes)
+        handoffActive = false
+        val staleRead = call("setup_terminal_read", readArguments)
+        assertEquals(true, staleRead.isError)
+        assertFalse(staleRead.content.joinToString().contains("READY"))
+        val missingRequest = call("setup_terminal_read", buildJsonObject { put("terminal_id", "live-pty") })
+        assertEquals(true, missingRequest.isError)
     }
 }

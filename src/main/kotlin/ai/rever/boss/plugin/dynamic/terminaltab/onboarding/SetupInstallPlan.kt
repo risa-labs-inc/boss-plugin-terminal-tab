@@ -404,15 +404,7 @@ private fun buildInstallCommandInternal(
         (isMac && aiToInstall.isNotEmpty()))
     if (needsSudo) {
         allCommands.add("echo '🔐 Authenticating administrator access...'")
-        // Use the ephemeral environment value when supplied; otherwise let the attached PTY
-        // present sudo's normal interactive password prompt.
-        allCommands.add(
-            "if [ -n \"\$BOSSTERM_SUDO_PWD\" ]; then " +
-                "printf '%s\\n' \"\$BOSSTERM_SUDO_PWD\" | sudo -S -v; else sudo -v; fi",
-        )
-        // Keep sudo credentials alive in background
-        allCommands.add("(while true; do sudo -n true; sleep 50; kill -0 \"\$\$\" 2>/dev/null || exit; done) &")
-        allCommands.add("SUDO_KEEPALIVE_PID=\$!")
+        allCommands.add("sudo -v")
     }
 
     // Add sudo commands
@@ -424,13 +416,7 @@ private fun buildInstallCommandInternal(
     // Add post-install commands
     allCommands.addAll(postInstallCommands)
 
-    // Kill sudo keepalive at the end (after ALL commands)
-    if (needsSudo) {
-        allCommands.add("kill \$SUDO_KEEPALIVE_PID 2>/dev/null || true")
-    }
-
-    // Report anything that failed without taking the rest of the run down with it. Deliberately
-    // AFTER the sudo-keepalive teardown so the summary is the last thing on screen.
+    // Report anything that failed without taking the rest of the run down with it.
     if (hasGuardedInstalls) {
         allCommands.add(
             "if [ -n \"\$$FAILED_INSTALLS_VAR\" ]; then " +

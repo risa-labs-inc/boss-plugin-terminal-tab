@@ -11,6 +11,7 @@ import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.UUID
@@ -49,6 +51,7 @@ data class BossTermSetupState(
     val agentDebugActive: Boolean = false,
     val agentDebugAwaitingVerification: Boolean = false,
     val agentDebugError: String? = null,
+    val debugEligibilityRevision: Int = 0,
 ) {
     val isRunning: Boolean get() =
         sessionId != null && (
@@ -108,13 +111,27 @@ object BossTermSetupController {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("bossterm-setup"))
     private val _state = MutableStateFlow(BossTermSetupState())
     val state: StateFlow<BossTermSetupState> = _state.asStateFlow()
+    @Volatile
     private var retainedRequest: SetupRequest? = null
+    @Volatile
     private var terminalWindowId: String? = null
+    @Volatile
     private var terminalContainerId: String? = null
+    @Volatile
     private var terminalTabId: String? = null
+    @Volatile
+    private var terminalReadyMarker: String? = null
+    @Volatile
+    private var terminalReadyCommand: String? = null
+    @Volatile
     private var sessionSupervisor: BossTermSetupSupervisor? = null
     private val terminalLock = Any()
+    @Volatile
     private var terminalReady = CompletableDeferred<Unit>()
+    @Volatile
+    private var activeSessionJob: Job? = null
+    @Volatile
+    private var terminalReadyJob: Job? = null
     private var pendingTerminalCommand: PendingTerminalCommand? = null
     @Volatile
     internal var terminalCommandSubmittedForTest: Boolean = false
@@ -148,6 +165,8 @@ object BossTermSetupController {
         terminalWindowId = null
         terminalContainerId = null
         terminalTabId = null
+        terminalReadyMarker = null
+        terminalReadyCommand = null
     }
 
     fun start(
@@ -156,7 +175,6 @@ object BossTermSetupController {
         installed: InstalledTools,
         settingsManager: SettingsManager,
         supervisor: BossTermSetupSupervisor? = null,
-        adminPassword: String = "",
     ): Boolean {
         if (_state.value.isRunning || _state.value.awaitingGitHubAuthentication) return false
         if (!supportsSelections(selections, TargetOs.current())) return false
@@ -171,9 +189,9 @@ object BossTermSetupController {
         handoffRequestedSessionId = null
         resumeDebugAndVerifyRequested = false
         terminalBoundarySafe = true
-        // Setup runs in the visible PTY so sudo/authentication can prompt there. Never retain or
-        // write a credential to disk; the legacy parameter remains source-compatible for the UI.
-        retainedRequest = SetupRequest(sessionId, windowId, selections, installed, settingsManager, supervisor, "")
+        // Setup runs in the visible PTY so sudo/authentication can prompt there; credentials are
+        // neither accepted by this controller nor written to disk.
+        retainedRequest = SetupRequest(sessionId, windowId, selections, installed, settingsManager, supervisor)
         sessionSupervisor = supervisor
         val plans = buildTaskPlan(selections, installed)
         _state.value = BossTermSetupState(
@@ -183,7 +201,7 @@ object BossTermSetupController {
         )
         initializeTerminal(windowId, sessionId)
 
-        scope.launch {
+        activeSessionJob = scope.launch {
             val supervised = runCatching {
                 supervisor?.start(sessionId, windowId, plans.map { it.state }) == true
             }.getOrDefault(false)
@@ -192,24 +210,21 @@ object BossTermSetupController {
             var terminalFailure: String? = null
             var terminalOutput: String? = null
             for ((index, plan) in plans.withIndex()) {
-                updateTask(index, SetupTaskStatus.RUNNING, supervisor)
-                appendOutput("Starting ${plan.state.title}")
+                updateTask(sessionId, index, SetupTaskStatus.RUNNING, supervisor)
+                appendOutput(sessionId, "Starting ${plan.state.title}")
                 val result = executeTaskWithRepairs(plan, index, sessionId, supervisor, supervised)
 
                 if (result.exitCode != 0) {
                     terminalFailure = "${plan.state.title} needs attention"
                     terminalOutput = result.output.takeLast(MAX_FAILURE_OUTPUT)
-                    updateTask(index, SetupTaskStatus.NEEDS_ATTENTION, supervisor)
+                    updateTask(sessionId, index, SetupTaskStatus.NEEDS_ATTENTION, supervisor)
                     break
                 }
-                updateTask(index, SetupTaskStatus.COMPLETE, supervisor)
-                appendOutput("Completed ${plan.state.title}")
+                updateTask(sessionId, index, SetupTaskStatus.COMPLETE, supervisor)
+                appendOutput(sessionId, "Completed ${plan.state.title}")
             }
 
             val success = terminalFailure == null
-            if (success && retainedRequest?.sessionId == sessionId) {
-                retainedRequest = retainedRequest?.copy(adminPassword = "")
-            }
             if (success && selections.authenticateGitHub) {
                 updateSession(sessionId) { it.copy(awaitingGitHubAuthentication = true) }
             } else {
@@ -224,17 +239,16 @@ object BossTermSetupController {
     }
 
     /** Restarts the last failed setup with the exact selections and detection snapshot it used. */
-    fun retry(adminPassword: String? = null): Boolean {
+    fun retry(): Boolean {
         val savedRequest = retainedRequest ?: return false
         if (_state.value.isRunning || _state.value.failureMessage == null) return false
-        val request = adminPassword?.let { savedRequest.copy(adminPassword = it) } ?: savedRequest
+        val request = savedRequest
         return start(
             request.windowId,
             request.selections,
             request.installed,
             request.settingsManager,
             request.supervisor,
-            request.adminPassword,
         )
     }
 
@@ -270,7 +284,7 @@ object BossTermSetupController {
             isTerminalConnected() && supervised && repairAttempt < MAX_REPAIR_ATTEMPTS
         ) {
             repairAttempt += 1
-            updateTask(index, SetupTaskStatus.REPAIRING, supervisor)
+            updateTask(sessionId, index, SetupTaskStatus.REPAIRING, supervisor)
             val decision = runCatching {
                 supervisor?.repair(
                     SetupFailure(
@@ -285,7 +299,7 @@ object BossTermSetupController {
                 ) ?: SetupRepair.STOP
             }.getOrDefault(SetupRepair.STOP)
             if (decision == SetupRepair.REFRESH_PACKAGES_AND_RETRY) {
-                appendOutput("Fluck Agent is refreshing package information")
+                appendOutput(sessionId, "Fluck Agent is refreshing package information")
                 result = runCommand(packageRefreshCommand(TargetOs.current()), sessionId)
                 val handedOff = handoffRequestedSessionId == sessionId
                 if (handedOff) {
@@ -293,15 +307,15 @@ object BossTermSetupController {
                     if (result.exitCode == 0) return result
                 }
                 if (result.exitCode != 0) {
-                    appendOutput("Package information refresh failed")
+                    appendOutput(sessionId, "Package information refresh failed")
                     continue
                 }
             }
             if (decision == SetupRepair.STOP) {
-                appendOutput("Fluck Agent needs your attention before setup can continue")
+                appendOutput(sessionId, "Fluck Agent needs your attention before setup can continue")
                 break
             }
-            appendOutput("Fluck Agent is retrying ${plan.state.title}")
+            appendOutput(sessionId, "Fluck Agent is retrying ${plan.state.title}")
             result = runTaskWithHandoff(plan, sessionId, supervisor)
         }
         return result
@@ -368,23 +382,37 @@ object BossTermSetupController {
         }
     }
 
-    /** Hard isolation for tests that exercise this process-lifetime singleton with a real PTY. */
-    internal fun resetForTest() {
+    /** Stops an active setup when this dynamic plugin is disabled or replaced. Idempotent. */
+    fun abortForPluginDispose() {
+        val sessionId = _state.value.sessionId ?: return
+        activeSessionJob?.cancel()
+        activeSessionJob = null
+        terminalReadyJob?.cancel()
+        terminalReadyJob = null
         val tabId = terminalTabId
         if (tabId != null) terminalStateOrNull()?.sendInput(byteArrayOf(0x03), tabId)
         val pending = synchronized(terminalLock) {
             pendingTerminalCommand.also {
                 pendingTerminalCommand = null
                 activeHandoffRequestId = null
+                terminalStateOrNull()?.let(McpTerminalRegistry::unregister)
             }
         }
-        pending?.completion?.complete(CommandResult(130, "Test reset"))
+        pending?.completion?.complete(CommandResult(130, "Terminal setup stopped because the plugin was disabled"))
         handoffRequestedSessionId = null
         resumeDebugAndVerifyRequested = false
         retainedRequest = null
         disposeTerminal()
         terminalReady = CompletableDeferred()
         terminalBoundarySafe = true
+        updateSession(sessionId) { BossTermSetupState() }
+    }
+
+    /** Hard isolation for tests that exercise this process-lifetime singleton with a real PTY. */
+    internal fun resetForTest() {
+        val worker = activeSessionJob
+        abortForPluginDispose()
+        if (worker != null) runBlocking { worker.join() }
         _state.value = BossTermSetupState()
     }
 
@@ -400,7 +428,7 @@ object BossTermSetupController {
                             true
                         } else false
                     }) {
-                    val output = redactSecret(synchronized(pending.output) { pending.output.toString() })
+                    val output = synchronized(pending.output) { pending.output.toString() }
                     lastTerminalOutputForTest = output
                     pending.completion.complete(CommandResult(exitCode, output))
                 }
@@ -408,11 +436,19 @@ object BossTermSetupController {
         }
     }
 
-    internal fun terminalEnvironment(): Map<String, String> =
-        mapOf("BOSSTERM_SUDO_PWD" to retainedRequest?.adminPassword.orEmpty())
-
     fun terminalState(windowId: String, containerId: String): TabbedTerminalState? =
         TabbedTerminalStateRegistry.get(windowId, containerId)
+
+    /** Called from the committed setup renderer so tab creation stays on Compose's UI thread. */
+    fun ensureSetupTerminalTab(windowId: String, containerId: String): Boolean {
+        if (terminalWindowId != windowId || terminalContainerId != containerId) return false
+        val tabId = terminalTabId ?: return false
+        val readyCommand = terminalReadyCommand ?: return false
+        val terminal = terminalState(windowId, containerId) ?: return false
+        if (!terminal.isInitialized) return false
+        return terminal.getTabById(tabId) != null ||
+            terminal.createTab(initialCommand = readyCommand, tabId = tabId, activate = true) == tabId
+    }
 
     fun hasSetupTerminal(terminalId: String): Boolean =
         _state.value.setupTerminalId == terminalId && terminalTabId == terminalId && isTerminalConnected()
@@ -463,9 +499,13 @@ object BossTermSetupController {
         updateSession(sessionId) {
             it.copy(agentDebugRequestInFlight = true, agentDebugActive = false, agentDebugError = null)
         }
-        if (synchronized(terminalLock) { pendingTerminalCommand != null }) {
-            val interrupted = synchronized(terminalLock) { pendingTerminalCommand }
-            terminalStateOrNull()?.sendInput(byteArrayOf(0x03), terminalTabId ?: return false)
+        val interrupted = synchronized(terminalLock) {
+            val pending = pendingTerminalCommand ?: return@synchronized null
+            val tabId = terminalTabId ?: return@synchronized null
+            if (terminalStateOrNull()?.sendInput(byteArrayOf(0x03), tabId) != true) return@synchronized null
+            pending
+        }
+        if (interrupted != null) {
             scope.launch {
                 delay(HANDOFF_BOUNDARY_TIMEOUT_MS)
                 val stillBusy = synchronized(terminalLock) { pendingTerminalCommand === interrupted }
@@ -473,7 +513,7 @@ object BossTermSetupController {
                     terminalBoundarySafe = false
                     handoffRequestedSessionId = null
                     synchronized(terminalLock) { activeHandoffRequestId = null }
-                    interrupted?.completion?.complete(
+                    interrupted.completion.complete(
                         CommandResult(HANDOFF_FAILED_EXIT_CODE, "Could not pause the active terminal command safely"),
                     )
                     updateSession(sessionId) {
@@ -487,6 +527,8 @@ object BossTermSetupController {
             }
         } else if (current.failureMessage != null) {
             resumeFailedTaskWithAgent(sessionId)
+        } else {
+            return clearHandoffRequest(sessionId, "This setup step already finished. Choose Debug on the active step.")
         }
         return true
     }
@@ -503,11 +545,19 @@ object BossTermSetupController {
     }
 
     private fun resumeFailedTaskWithAgent(sessionId: String) {
-        val request = retainedRequest?.takeIf { it.sessionId == sessionId } ?: return
+        val request = retainedRequest?.takeIf { it.sessionId == sessionId }
+            ?: run {
+                clearHandoffRequest(sessionId, "Setup retry information is unavailable")
+                return
+            }
         val plans = buildTaskPlan(request.selections, request.installed)
         val failedIndex = _state.value.tasks.indexOfFirst { it.status == SetupTaskStatus.NEEDS_ATTENTION }
-        val plan = plans.getOrNull(failedIndex) ?: return
-        scope.launch {
+        val plan = plans.getOrNull(failedIndex)
+            ?: run {
+                clearHandoffRequest(sessionId, "Failed setup step is unavailable")
+                return
+            }
+        activeSessionJob = scope.launch {
             val result = runAgentHandoff(
                 sessionId,
                 plan,
@@ -516,11 +566,11 @@ object BossTermSetupController {
             )
             var success = result.exitCode == 0
             var failureOutput = result.output
-            updateTask(failedIndex, if (success) SetupTaskStatus.COMPLETE else SetupTaskStatus.NEEDS_ATTENTION, request.supervisor)
+            updateTask(sessionId, failedIndex, if (success) SetupTaskStatus.COMPLETE else SetupTaskStatus.NEEDS_ATTENTION, request.supervisor)
             if (success) {
                 updateSession(sessionId) { it.copy(finished = false, failureMessage = null, failureOutput = null) }
                 for (index in (failedIndex + 1) until plans.size) {
-                    updateTask(index, SetupTaskStatus.RUNNING, request.supervisor)
+                    updateTask(sessionId, index, SetupTaskStatus.RUNNING, request.supervisor)
                     val remaining = executeTaskWithRepairs(
                         plans[index],
                         index,
@@ -531,15 +581,13 @@ object BossTermSetupController {
                     success = remaining.exitCode == 0
                     failureOutput = remaining.output
                     updateTask(
+                        sessionId,
                         index,
                         if (success) SetupTaskStatus.COMPLETE else SetupTaskStatus.NEEDS_ATTENTION,
                         request.supervisor,
                     )
                     if (!success) break
                 }
-            }
-            if (success && retainedRequest?.sessionId == sessionId) {
-                retainedRequest = retainedRequest?.copy(adminPassword = "")
             }
             if (success && request.selections.authenticateGitHub) {
                 updateSession(sessionId) {
@@ -561,6 +609,26 @@ object BossTermSetupController {
         }
     }
 
+    private fun clearHandoffRequest(sessionId: String, error: String): Boolean {
+        synchronized(terminalLock) { activeHandoffRequestId = null }
+        handoffRequestedSessionId = null
+        resumeDebugAndVerifyRequested = false
+        updateSession(sessionId) {
+            it.copy(
+                agentDebugRequestInFlight = false,
+                agentDebugActive = false,
+                agentDebugAwaitingVerification = false,
+                agentDebugError = error,
+            )
+        }
+        return false
+    }
+
+    private fun handoffFailure(sessionId: String, error: String): CommandResult {
+        clearHandoffRequest(sessionId, error)
+        return CommandResult(HANDOFF_FAILED_EXIT_CODE, error)
+    }
+
     private suspend fun runAgentHandoff(
         sessionId: String,
         plan: TaskPlan,
@@ -568,12 +636,12 @@ object BossTermSetupController {
         supervisor: BossTermSetupSupervisor?,
     ): CommandResult {
         val terminalId = terminalTabId
-            ?: return CommandResult(-1, "Setup terminal is unavailable")
+            ?: return handoffFailure(sessionId, "Setup terminal is unavailable")
         handoffRequestedSessionId = null
         val requestId = synchronized(terminalLock) { activeHandoffRequestId }
-            ?: return CommandResult(-1, "Fluck handoff request is unavailable")
+            ?: return handoffFailure(sessionId, "Fluck handoff request is unavailable")
         val windowId = terminalWindowId
-            ?: return CommandResult(-1, "Setup window is unavailable")
+            ?: return handoffFailure(sessionId, "Setup window is unavailable")
         // The click authorized this exact request. Publish its real tab to MCP before the host
         // queues Fluck's prompt, otherwise a fast agent can receive the prompt before the later
         // opened acknowledgement reaches this controller. Dedicated setup tools remain guarded
@@ -625,7 +693,7 @@ object BossTermSetupController {
         val verification = plan.verificationCommand
             ?: return CommandResult(HANDOFF_FAILED_EXIT_CODE, "This setup step has no safe verification command")
         updateSession(sessionId) { it.copy(agentDebugAwaitingVerification = true) }
-        appendOutput("Verifying Fluck's fix for ${plan.state.title}")
+        appendOutput(sessionId, "Verifying Fluck's fix for ${plan.state.title}")
         return runCommand(verification, sessionId).also {
             updateSession(sessionId) { current -> current.copy(agentDebugAwaitingVerification = false) }
         }
@@ -633,25 +701,32 @@ object BossTermSetupController {
 
     fun setupTerminalScrollback(
         terminalId: String,
+        requestId: String,
         lines: Int = 200,
-    ): SetupTerminalScrollback? {
-        if (!hasSetupTerminal(terminalId)) return null
-        val snapshot = terminalStateOrNull()?.getTabById(terminalId)?.textBuffer?.createSnapshot() ?: return null
-        val all = (snapshot.historyLines + snapshot.screenLines).map { redactSecret(it.text.trimEnd()) }
-        return SetupTerminalScrollback(all.takeLast(lines.coerceIn(1, 2_000)), all.size)
+    ): SetupTerminalScrollback? = synchronized(terminalLock) {
+        if (!hasSetupTerminalHandoff(terminalId, requestId)) return@synchronized null
+        val snapshot = terminalStateOrNull()?.getTabById(terminalId)?.textBuffer?.createSnapshot()
+            ?: return@synchronized null
+        val all = (snapshot.historyLines + snapshot.screenLines).map { it.text.trimEnd() }
+        SetupTerminalScrollback(all.takeLast(lines.coerceIn(1, 2_000)), all.size)
     }
 
     internal fun terminalCapturedOutputForTest(): String = synchronized(terminalLock) {
         pendingTerminalCommand?.let { pending ->
-            redactSecret(synchronized(pending.output) { pending.output.toString() })
+            synchronized(pending.output) { pending.output.toString() }
         } ?: lastTerminalOutputForTest
     }
 
     private fun initializeTerminal(windowId: String, sessionId: String) {
         val containerId = "bossterm-setup-$sessionId"
+        val setupTabId = "bossterm-setup-tab-$sessionId"
+        val readyToken = UUID.randomUUID().toString().replace("-", "")
+        val readyMarker = "__BOSS_SETUP_READY_${readyToken}__"
         terminalWindowId = windowId
         terminalContainerId = containerId
-        terminalTabId = null
+        terminalTabId = setupTabId
+        terminalReadyMarker = readyMarker
+        terminalReadyCommand = if (TargetOs.current().isWindows) "echo $readyMarker" else "printf '\\n$readyMarker\\n'"
         val terminal = TabbedTerminalStateRegistry.getOrCreate(windowId, containerId)
         // The install terminal is exposed to generic BOSS MCP tools only during an accepted Fluck
         // handoff. Local setup commands remain private; revocation prevents new MCP lookups before
@@ -660,19 +735,21 @@ object BossTermSetupController {
         updateSession(sessionId) {
             it.copy(setupTerminalContainerId = containerId, setupTerminalId = null)
         }
-        scope.launch {
+        terminalReadyJob = scope.launch {
             repeat(TERMINAL_READY_POLL_ATTEMPTS) {
                 val terminal = terminalStateOrNull()
                 if (terminal != null) {
-                    val tabId = terminal.activeTab?.id
-                    // This registry container is dedicated to setup and its UI hides tab controls.
-                    // Adopt the renderer's active tab as soon as it exists; requiring a transient
-                    // tab count of exactly one can miss readiness while TabbedTerminal initializes.
-                    if (tabId != null) terminalTabId = tabId
-                    if (isTerminalConnected()) {
-                        updateSession(sessionId) { it.copy(setupTerminalId = tabId) }
-                        terminalReady.complete(Unit)
-                        return@launch
+                    val tab = terminal.getTabById(setupTabId)
+                    if (tab?.connectionState?.value is ConnectionState.Connected) {
+                        val snapshot = tab.textBuffer.createSnapshot()
+                        val output = joinTerminalLines(
+                            (snapshot.historyLines + snapshot.screenLines).map { it.text.trimEnd() to it.isWrapped },
+                        )
+                        if (output.lineSequence().any { it.trim() == readyMarker }) {
+                            updateSession(sessionId) { it.copy(setupTerminalId = setupTabId) }
+                            terminalReady.complete(Unit)
+                            return@launch
+                        }
                     }
                 }
                 if (_state.value.sessionId != sessionId) {
@@ -720,11 +797,11 @@ object BossTermSetupController {
             authenticateGitHubAfterSetup = authenticateGitHub,
         )
         initializeTerminal("test-window", sessionId)
-        scope.launch {
-            updateTask(0, SetupTaskStatus.RUNNING, null)
+        activeSessionJob = scope.launch {
+            updateTask(sessionId, 0, SetupTaskStatus.RUNNING, null)
             val result = executeTaskWithRepairs(plan, 0, sessionId, supervisor, supervisor != null)
             val success = result.exitCode == 0
-            updateTask(0, if (success) SetupTaskStatus.COMPLETE else SetupTaskStatus.NEEDS_ATTENTION, null)
+            updateTask(sessionId, 0, if (success) SetupTaskStatus.COMPLETE else SetupTaskStatus.NEEDS_ATTENTION, null)
             updateSession(sessionId) {
                 it.copy(
                     finished = !success || !authenticateGitHub,
@@ -737,19 +814,15 @@ object BossTermSetupController {
         return true
     }
 
-    private fun redactSecret(text: String): String {
-        val secret = retainedRequest?.adminPassword.orEmpty()
-        return if (secret.isBlank()) text else text.replace(secret, "[redacted]")
-    }
-
     private suspend fun updateTask(
+        sessionId: String,
         index: Int,
         status: SetupTaskStatus,
         supervisor: BossTermSetupSupervisor?,
     ) {
-        val sessionId = requireNotNull(_state.value.sessionId)
         var updatedTask: SetupTaskState? = null
         updateSession(sessionId) { current ->
+            if (index !in current.tasks.indices) return@updateSession current
             val tasks = current.tasks.toMutableList()
             tasks[index] = tasks[index].copy(status = status)
             updatedTask = tasks[index]
@@ -765,7 +838,6 @@ object BossTermSetupController {
         val installed: InstalledTools,
         val settingsManager: SettingsManager,
         val supervisor: BossTermSetupSupervisor?,
-        val adminPassword: String,
     )
 
     internal data class TaskPlan(
@@ -861,7 +933,7 @@ object BossTermSetupController {
         } else {
             "{ getent passwd \"\$USER\" 2>/dev/null || grep \"^\$USER:\" /etc/passwd; } | cut -d: -f7"
         }
-        return "$executable\nLOGIN_SHELL=\$($loginShell)\n" +
+        return "#!/bin/bash\nset -e\n$executable\nLOGIN_SHELL=\$($loginShell)\n" +
             "test \"\$(basename \"\$LOGIN_SHELL\")\" = \"${choice.command}\"\n"
     }
 
@@ -937,8 +1009,7 @@ object BossTermSetupController {
         val installCommand = when {
             alreadyInstalled -> executableVerification(executable, targetOs).orEmpty()
             choice == PackageManagerChoice.HOMEBREW && targetOs.isMac ->
-                "#!/bin/bash\nif [ -n \"\$BOSSTERM_SUDO_PWD\" ]; then " +
-                    "printf '%s\\n' \"\$BOSSTERM_SUDO_PWD\" | sudo -S -v; else sudo -v; fi && " +
+                "#!/bin/bash\nsudo -v && " +
                     "/bin/bash -c " +
                     "\"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"\n"
             choice == PackageManagerChoice.CHOCOLATEY && targetOs.isWindows ->
@@ -973,7 +1044,7 @@ object BossTermSetupController {
     private suspend fun runTask(plan: TaskPlan, sessionId: String): CommandResult {
         val installation = runCommand(plan.command, sessionId)
         if (installation.exitCode != 0 || plan.verificationCommand == null) return installation
-        appendOutput("Verifying ${plan.state.title}")
+        appendOutput(sessionId, "Verifying ${plan.state.title}")
         val verification = runCommand(plan.verificationCommand, sessionId)
         return if (verification.exitCode == 0) {
             installation
@@ -1048,11 +1119,11 @@ object BossTermSetupController {
             ShellChoice.BASH -> "\$HOME/.bashrc"
             ShellChoice.FISH -> "\$HOME/.config/fish/config.fish"
             ShellChoice.POWERSHELL, ShellChoice.CMD ->
-                "\$env:USERPROFILE/Documents/PowerShell/Microsoft.PowerShell_profile.ps1"
+                "(Join-Path \$env:USERPROFILE 'Documents/PowerShell/Microsoft.PowerShell_profile.ps1')"
             ShellChoice.KEEP_CURRENT -> "\$HOME/.zshrc"
         }
         return if (targetOs.isWindows) {
-            "$executable; if (-not (Select-String -Path $config -Pattern '$marker' -Quiet)) { exit 1 }"
+            "$executable; if (-not (Select-String -LiteralPath $config -Pattern '$marker' -Quiet)) { exit 1 }"
         } else {
             "#!/bin/bash\nset -e\n$executable\ngrep -q '$marker' \"$config\"\n"
         }
@@ -1076,11 +1147,12 @@ object BossTermSetupController {
         if (_state.value.sessionId != sessionId) return CommandResult(-1, "Setup session changed")
         val windows = TargetOs.current().isWindows
         val file = File.createTempFile("bossterm-setup-", if (windows) ".ps1" else ".sh").apply {
+            restrictToOwner(this)
             writeText(script)
             if (!windows) setExecutable(true)
         }
         val token = UUID.randomUUID().toString().replace("-", "")
-        val wrapper = File.createTempFile("bossterm-setup-wrapper-", if (windows) ".ps1" else ".sh")
+        val wrapper = File.createTempFile("bossterm-setup-wrapper-", if (windows) ".ps1" else ".sh").also(::restrictToOwner)
         val completion = CompletableDeferred<CommandResult>()
         val pending = PendingTerminalCommand(SetupTerminalSentinelParser(token), completion)
         try {
@@ -1088,6 +1160,7 @@ object BossTermSetupController {
                 check(pendingTerminalCommand == null) { "A setup command is already active" }
                 pendingTerminalCommand = pending
             }
+            notifyDebugEligibilityChanged(sessionId)
             terminalCommandSubmittedForTest = false
             val quotedPath = file.absolutePath.replace("'", if (windows) "''" else "'\"'\"'")
             val submitted = if (windows) {
@@ -1130,7 +1203,7 @@ object BossTermSetupController {
                     if (!isTerminalConnected()) {
                         completion.complete(CommandResult(-1, "Interactive terminal exited"))
                     }
-                    delay(TERMINAL_READY_POLL_MS)
+                    delay(TERMINAL_OUTPUT_POLL_MS)
                 }
             }
             return (withTimeoutOrNull(TASK_TIMEOUT_MINUTES * 60_000L) { completion.await() }
@@ -1153,6 +1226,7 @@ object BossTermSetupController {
             synchronized(terminalLock) {
                 if (pendingTerminalCommand === pending) pendingTerminalCommand = null
             }
+            notifyDebugEligibilityChanged(sessionId)
             file.delete()
             wrapper.delete()
         }
@@ -1183,6 +1257,15 @@ object BossTermSetupController {
         }
     }
 
+    private fun restrictToOwner(file: File) {
+        file.setReadable(false, false)
+        file.setWritable(false, false)
+        file.setExecutable(false, false)
+        check(file.setReadable(true, true) && file.setWritable(true, true)) {
+            "Could not restrict setup command file permissions"
+        }
+    }
+
     internal fun joinTerminalLines(lines: List<Pair<String, Boolean>>): String = buildString {
         lines.forEachIndexed { index, (text, wrapsToNext) ->
             append(text)
@@ -1190,12 +1273,16 @@ object BossTermSetupController {
         }
     }
 
-    private fun appendOutput(line: String) {
+    private fun appendOutput(sessionId: String, line: String) {
         val printable = line.trim().take(MAX_VISIBLE_LINE_LENGTH)
         if (printable.isEmpty()) return
-        _state.update { current ->
+        updateSession(sessionId) { current ->
             current.copy(outputLines = (current.outputLines + printable).takeLast(MAX_VISIBLE_LINES))
         }
+    }
+
+    private fun notifyDebugEligibilityChanged(sessionId: String) {
+        updateSession(sessionId) { it.copy(debugEligibilityRevision = it.debugEligibilityRevision + 1) }
     }
 
     private inline fun updateSession(
@@ -1220,6 +1307,7 @@ object BossTermSetupController {
     private const val MAX_REPAIR_ATTEMPTS = 2
     private const val TERMINAL_READY_TIMEOUT_MS = 30_000L
     private const val TERMINAL_READY_POLL_MS = 25L
+    private const val TERMINAL_OUTPUT_POLL_MS = 200L
     private const val TERMINAL_READY_POLL_ATTEMPTS = 1_200
     private const val TIMEOUT_EXIT_CODE = 124
     private const val HANDOFF_FAILED_EXIT_CODE = 125

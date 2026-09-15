@@ -96,6 +96,35 @@ class BossTermSetupStateTest {
     }
 
     @Test
+    fun `shell verification stops when executable smoke test fails`() {
+        val plan = BossTermSetupController.buildTaskPlan(
+            OnboardingSelections(
+                packageManager = PackageManagerChoice.NONE,
+                shell = ShellChoice.FISH,
+                shellCustomization = ShellCustomizationChoice.NONE,
+                installGit = false,
+                installGitHubCLI = false,
+                aiAssistants = emptySet(),
+            ),
+            InstalledTools(fish = true),
+            TargetOs.LINUX,
+        ).first { it.state.id == "preferences" }
+
+        assertTrue(plan.verificationCommand.orEmpty().startsWith("#!/bin/bash\nset -e\n"))
+    }
+
+    @Test
+    fun `PowerShell prompt verification quotes the profile path expression`() {
+        val verification = BossTermSetupController.promptVerification(
+            ShellCustomizationChoice.OH_MY_POSH,
+            ShellChoice.POWERSHELL,
+            TargetOs.WINDOWS,
+        ).orEmpty()
+
+        assertTrue(verification.contains("-LiteralPath (Join-Path \$env:USERPROFILE"))
+    }
+
+    @Test
     fun `an explicit package manager is a real setup task`() {
         val plans = BossTermSetupController.buildTaskPlan(
             OnboardingSelections(

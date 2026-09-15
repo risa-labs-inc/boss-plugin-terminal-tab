@@ -3,6 +3,7 @@ package ai.rever.boss.plugin.dynamic.terminaltab.onboarding
 import ai.rever.bossterm.compose.TabbedTerminal
 import ai.rever.bossterm.compose.settings.TerminalSettingsOverride
 import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -10,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import kotlin.test.Test
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -47,6 +49,12 @@ class BossTermSetupTerminalPersistenceTest {
                             isActive = visible.value && !state.isBackgrounded,
                             modifier = Modifier.size(800.dp, 600.dp),
                         )
+                        LaunchedEffect(containerId) {
+                            repeat(400) {
+                                if (BossTermSetupController.ensureSetupTerminalTab("test-window", containerId)) return@LaunchedEffect
+                                delay(25)
+                            }
+                        }
                     }
                 }
             }
@@ -56,7 +64,8 @@ class BossTermSetupTerminalPersistenceTest {
             val state = BossTermSetupController.state.value
             val containerId = requireNotNull(state.setupTerminalContainerId)
             val terminal = requireNotNull(BossTermSetupController.terminalState("test-window", containerId))
-            val tabId = requireNotNull(terminal.activeTab?.id)
+            val tabId = requireNotNull(state.setupTerminalId)
+            assertTrue(terminal.getTabById(tabId) != null)
 
             BossTermSetupController.sendToBackground()
             visible.value = false

@@ -108,12 +108,17 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         setupStatusJob = context.pluginScope.launch {
             var registered = false
             BossTermSetupController.state.collect { state ->
-                registered = updateSetupStatusRegistration(
-                    hasSession = state.sessionId != null,
-                    isRegistered = registered,
-                    register = { context.registerStatusBarItem(setupStatusItem) },
-                    unregister = { context.unregisterStatusBarItem(BossTermSetupStatusItem.ITEM_ID) },
-                )
+                runCatching {
+                    updateSetupStatusRegistration(
+                        hasSession = state.sessionId != null,
+                        isRegistered = registered,
+                        register = { context.registerStatusBarItem(setupStatusItem) },
+                        unregister = { context.unregisterStatusBarItem(BossTermSetupStatusItem.ITEM_ID) },
+                    )
+                }.onSuccess { registered = it }
+                    .onFailure { error ->
+                        mcpLogger.warn(LogCategory.TERMINAL, "Failed to update setup status item", error = error)
+                    }
             }
         }
 
@@ -392,7 +397,12 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         TerminalMcpConfigHolder.config = null
         setupStatusJob?.cancel()
         setupStatusJob = null
-        pluginContext?.unregisterStatusBarItem(BossTermSetupStatusItem.ITEM_ID)
+        BossTermSetupController.abortForPluginDispose()
+        TerminalPluginContextHolder.setupSupervisor?.dispose()
+        runCatching { pluginContext?.unregisterStatusBarItem(BossTermSetupStatusItem.ITEM_ID) }
+            .onFailure { error ->
+                mcpLogger.warn(LogCategory.TERMINAL, "Failed to unregister setup status item", error = error)
+            }
         TerminalPluginContextHolder.setupSupervisor = null
         // Drop the registry reference so a disposed host registry isn't held by the
         // process-wide voice source across a disable/update cycle. The source itself

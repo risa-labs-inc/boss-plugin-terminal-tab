@@ -76,6 +76,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.rememberWindowState
+import kotlinx.coroutines.delay
 
 /** The compact, confirmation-first BOSS Term setup shown by both the app and Terminal Tab. */
 @Composable
@@ -759,6 +760,14 @@ internal fun SetupProgress(
                         isActive = !state.isBackgrounded,
                         modifier = Modifier.fillMaxSize(),
                     )
+                    LaunchedEffect(windowId, containerId, terminalState) {
+                        while (
+                            BossTermSetupController.state.value.setupTerminalContainerId == containerId &&
+                            !BossTermSetupController.ensureSetupTerminalTab(windowId, containerId)
+                        ) {
+                            delay(25)
+                        }
+                    }
                 }
             }
         }

@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.dynamic.terminaltab.TabbedTerminalStateRegistry
 import ai.rever.bossterm.compose.TabbedTerminal
 import ai.rever.bossterm.compose.settings.TerminalSettingsOverride
 import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -11,6 +12,7 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
 import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.AfterTest
@@ -32,22 +34,22 @@ class BossTermSetupHandoffStateTest {
         if (TargetOs.current().isWindows) return@runComposeUiTest
         BossTermSetupController.clearFinished()
         val fix = Files.createTempFile("terminal-tab-agent-fix-", ".marker").toFile().apply { delete() }
-        val request = AtomicReference<SetupDebugRequest>()
+        val debugRequest = AtomicReference<SetupDebugRequest>()
         val resume = CompletableDeferred<Unit>()
         val supervisor = object : BossTermSetupSupervisor {
             override suspend fun start(sessionId: String, windowId: String, tasks: List<SetupTaskState>) = true
 
             override suspend fun debugAndFix(
-                requestValue: SetupDebugRequest,
+                request: SetupDebugRequest,
                 onAccepted: () -> Unit,
             ): SetupDebugResult {
-                request.set(requestValue)
+                debugRequest.set(request)
                 onAccepted()
-                assertTrue(BossTermSetupController.hasSetupTerminalHandoff(requestValue.terminalId, requestValue.requestId))
+                assertTrue(BossTermSetupController.hasSetupTerminalHandoff(request.terminalId, request.requestId))
                 assertTrue(
                     BossTermSetupController.sendSetupTerminalInput(
-                        requestValue.terminalId,
-                        requestValue.requestId,
+                        request.terminalId,
+                        request.requestId,
                         "touch '${fix.absolutePath}'\r".toByteArray(),
                     ),
                 )
@@ -56,7 +58,7 @@ class BossTermSetupHandoffStateTest {
             }
 
             override fun resumeDebug(requestId: String): Boolean {
-                if (request.get()?.requestId != requestId) return false
+                if (debugRequest.get()?.requestId != requestId) return false
                 return resume.complete(Unit)
             }
         }
@@ -81,6 +83,12 @@ class BossTermSetupHandoffStateTest {
                             isActive = !state.isBackgrounded,
                             modifier = Modifier.size(800.dp, 600.dp),
                         )
+                        LaunchedEffect(containerId) {
+                            repeat(400) {
+                                if (BossTermSetupController.ensureSetupTerminalTab("test-window", containerId)) return@LaunchedEffect
+                                delay(25)
+                            }
+                        }
                     }
                 }
             }
@@ -96,7 +104,7 @@ class BossTermSetupHandoffStateTest {
             assertEquals(SetupTaskStatus.COMPLETE, BossTermSetupController.state.value.tasks.single().status)
             assertTrue("VERIFIER_RAN" in BossTermSetupController.terminalCapturedOutputForTest())
 
-            val accepted = requireNotNull(request.get())
+            val accepted = requireNotNull(debugRequest.get())
             assertFalse(BossTermSetupController.hasSetupTerminalHandoff(accepted.terminalId, accepted.requestId))
             assertFalse(
                 BossTermSetupController.sendSetupTerminalInput(

@@ -157,6 +157,8 @@ class OnboardingInstallScriptTest {
             script.contains("Authenticating administrator access"),
             "script should authenticate sudo upfront when it contains sudo steps:\n$script"
         )
+        assertFalse(script.contains("sudo -n true"), "setup must not keep sudo credentials alive:\n$script")
+        assertFalse(script.contains("SUDO_KEEPALIVE_PID"), "setup must not spawn a sudo keepalive:\n$script")
     }
 
     /**

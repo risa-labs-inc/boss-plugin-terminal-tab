@@ -269,6 +269,8 @@ dependencies {
     testImplementation(compose.ui)
     @OptIn(org.jetbrains.compose.ExperimentalComposeLibrary::class)
     testImplementation(compose.uiTest)
+    // The host supplies Skiko in production; standalone UI tests need the current OS native runtime.
+    testRuntimeOnly(compose.desktop.currentOs)
     if (useLocalDependencies) {
         testImplementation(files("$bossPluginApiPath/build/libs/boss-plugin-api-1.0.55.jar"))
     } else {
@@ -278,6 +280,14 @@ dependencies {
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+    val bossTermTestSettingsDir = layout.buildDirectory.dir("test-bossterm-settings").get().asFile
+    systemProperty("bossterm.settings.dir", bossTermTestSettingsDir.absolutePath)
+    doFirst {
+        bossTermTestSettingsDir.deleteRecursively()
+        check(bossTermTestSettingsDir.mkdirs()) {
+            "Could not create isolated BossTerm test settings directory"
+        }
+    }
 }
 
 // Keep the diagnostic thin JAR from replacing the installable plugin artifact.

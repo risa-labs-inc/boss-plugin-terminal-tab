@@ -23,7 +23,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import kotlinx.coroutines.flow.StateFlow
 import java.util.UUID
@@ -316,21 +318,25 @@ class TerminalTabPluginAPIImpl(
     override fun TerminalOnboardingWizard(onDismiss: () -> Unit, onComplete: () -> Unit) {
         val windowId = LocalWindowIdProvider.current?.getWindowId() ?: return
         val ownerToken = remember { UUID.randomUUID().toString() }
-        val ownsRenderer = remember(windowId, ownerToken) {
-            SetupWizardRendererOwnership.claim(ownerToken, windowId)
-        }
-        DisposableEffect(ownerToken, ownsRenderer) {
+        var ownsRenderer by remember(ownerToken) { mutableStateOf<Boolean?>(null) }
+        DisposableEffect(windowId, ownerToken) {
+            val claimed = SetupWizardRendererOwnership.claim(ownerToken, windowId)
+            ownsRenderer = claimed
             onDispose {
-                if (ownsRenderer) SetupWizardRendererOwnership.release(ownerToken)
+                if (claimed) SetupWizardRendererOwnership.release(ownerToken)
             }
         }
-        if (!ownsRenderer) {
+        if (ownsRenderer == null) return
+        if (ownsRenderer == false) {
             LaunchedEffect(ownerToken) {
                 BossTermSetupController.bringToForeground()
                 onDismiss()
             }
             return
         }
+        // BossConsole memoizes this callback by its setup-request generation. A new Help,
+        // Toolbox, or terminal-menu request therefore foregrounds the existing sticky owner
+        // without unmounting its PTY renderer. Do not replace this key with Unit.
         LaunchedEffect(onDismiss) {
             BossTermSetupController.bringToForeground()
         }
