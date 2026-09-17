@@ -6,6 +6,7 @@ import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import io.modelcontextprotocol.kotlin.sdk.types.ToolSchema
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.JsonObject
@@ -254,7 +255,10 @@ private const val RUN_IN_SIDEBAR_DESCRIPTION =
         "appears in list_tabs / read_scrollback like any other tab, so you can read its " +
         "output afterwards. Pass config_id to keep a stable tab per run configuration, and " +
         "is_rerun=true (with config_id) to re-run in that existing tab (sends Ctrl+C, " +
-        "clears, then re-runs) instead of opening a new one."
+        "clears, then re-runs) instead of opening a new one. Pass env to give the command " +
+        "environment variables without putting their values on the command line: a value " +
+        "may be a {{secret:<id>}} reference, which the host resolves after the operator " +
+        "approves, so a credential reaches the shell without ever reaching you."
 
 private fun runInSidebarSchema(): ToolSchema =
     ToolSchema(
@@ -282,6 +286,13 @@ private fun runInSidebarSchema(): ToolSchema =
                 put("description", "Optional label for this run in the top-bar runner dropdown. " +
                         "Defaults to the command.")
             }
+            putJsonObject("env") {
+                put("type", "object")
+                putJsonObject("additionalProperties") { put("type", "string") }
+                put("description", "Optional environment variables for the command, as an object " +
+                        "of NAME to value. Values never appear in the command line, the scrollback " +
+                        "or this tool's result; a value may be a {{secret:<id>}} reference.")
+            }
         },
         required = listOf("command")
     )
@@ -293,6 +304,8 @@ private suspend fun runInSidebar(args: JsonObject): CallToolResult {
     }
     val workingDir = args.str("working_dir")
     val isRerun = args.bool("is_rerun") ?: false
+    val env = args.envMap("env") ?: return errorResult("env must be an object of string values")
+    SidebarEnvInjection.validationError(env)?.let { return errorResult(it) }
 
     // Stable id used as BOTH the sidebar tab id and the runner config id, so the
     // top-bar runner's running-state and the tab's close-cleanup line up. When the
@@ -306,10 +319,26 @@ private suspend fun runInSidebar(args: JsonObject): CallToolResult {
     val windowId = focusedWindowId()
         ?: return errorResult("No focused BossConsole window; focus a window and retry.")
 
+    // The command the SHELL runs. With env, the values go to an owner-only file that the shell
+    // sources and removes; the command line, the runner entry and the result below carry the
+    // path, never a value (see SidebarEnvInjection).
+    val shellCommand =
+        if (env.isEmpty()) {
+            command
+        } else {
+            try {
+                val file = SidebarEnvInjection.writeEnvFile(env, bossDataDir("run/env"))
+                SidebarEnvInjection.wrapCommand(command, file)
+            } catch (t: Throwable) {
+                hostToolsLogger.warn(LogCategory.TERMINAL, "run_in_sidebar: could not write env file", error = t)
+                return errorResult("Failed to prepare environment for the command: ${t.message}")
+            }
+        }
+
     val started = try {
         TabbedTerminalStateRegistry.newSidebarTab(
             windowId = windowId,
-            command = command,
+            command = shellCommand,
             workingDirectory = workingDir,
             configId = configId,
             isRerun = isRerun
@@ -339,7 +368,10 @@ private suspend fun runInSidebar(args: JsonObject): CallToolResult {
     return jsonResult(isError = false) {
         put("ok", started)
         put("windowId", windowId)
+        // The caller's command, not the shell command: the env file path is an implementation
+        // detail, and the values are never echoed. Only the NAMES say what was injected.
         put("command", command)
+        put("envKeys", JsonArray(env.keys.sorted().map(::JsonPrimitive)))
         put("configId", configId)
         put("isRerun", isRerun)
         put("panelOpenRequested", panelRequested)
@@ -568,6 +600,24 @@ private fun JsonObject?.str(key: String): String? {
     val prim = this?.get(key) as? JsonPrimitive ?: return null
     if (prim is JsonNull) return null
     return prim.content
+}
+
+/**
+ * Read [key] as a map of string values. Absent means an empty map; anything that is not an
+ * object of string primitives (an array, a nested object, a number) means null, so the caller
+ * can refuse it rather than inject half of it.
+ */
+private fun JsonObject?.envMap(key: String): Map<String, String>? {
+    val element = this?.get(key) ?: return emptyMap()
+    if (element is JsonNull) return emptyMap()
+    val obj = element as? JsonObject ?: return null
+    val out = LinkedHashMap<String, String>()
+    for ((k, v) in obj) {
+        val prim = v as? JsonPrimitive ?: return null
+        if (!prim.isString) return null
+        out[k] = prim.content
+    }
+    return out
 }
 
 /** Read [key] as a boolean, accepting `"true"`/`"false"` as strings. See [str] for the `as?`. */

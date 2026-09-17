@@ -94,6 +94,13 @@ internal fun installDynamicPluginTools(
     server: Server,
     registry: McpToolRegistry,
     scope: CoroutineScope,
+    /**
+     * Names the bridge must never put on the server. [RESERVED_TOOL_NAMES] when this plugin's
+     * own two tools are registered straight onto the server; [bossTermOwnToolNames] when they
+     * come through the registry like everything else (see [HostMcpToolProvider]), in which
+     * case reserving their names would be the bridge skipping exactly the tools it should carry.
+     */
+    reserved: Set<String> = RESERVED_TOOL_NAMES,
 ) {
     if (bridgeDisposed) {
         dynLogger.warn(LogCategory.TERMINAL, "Bridge install skipped: plugin already disposed")
@@ -104,7 +111,7 @@ internal fun installDynamicPluginTools(
     val present = mutableSetOf<String>() // plugin tool names currently on this server
     currentSyncJob = scope.launch {
         registry.tools.collect { tools ->
-            mutex.withLock { syncTools(server, registry, tools, present) }
+            mutex.withLock { syncTools(server, registry, tools, present, reserved) }
         }
     }
     dynLogger.info(LogCategory.TERMINAL, "Dynamic plugin MCP tool bridge installed")
@@ -127,12 +134,13 @@ private suspend fun syncTools(
     registry: McpToolRegistry,
     desired: List<RegisteredMcpTool>,
     present: MutableSet<String>,
+    reserved: Set<String> = RESERVED_TOOL_NAMES,
 ) {
     // Build the wanted set, dropping reserved names (registry already dedups by name).
     val wanted = LinkedHashMap<String, RegisteredMcpTool>()
     for (tool in desired) {
         val name = tool.definition.name
-        if (name in RESERVED_TOOL_NAMES) {
+        if (name in reserved) {
             dynLogger.warn(
                 LogCategory.TERMINAL, "Skipping plugin MCP tool with reserved name",
                 mapOf("tool" to name, "providerId" to tool.providerId),

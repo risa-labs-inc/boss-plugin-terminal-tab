@@ -45,6 +45,39 @@ build.gradle.kts   → Build config + version (single source of truth)
 - **Decompose**: Navigation and component lifecycle
 - **Coroutines**: Async operations
 
+## The two host tools go through the host's MCP tool registry
+
+`run_in_sidebar` and `cli` are defined once, in `McpHostTools.kt` (`bossHostMcpToolDefs`), and
+projected three ways: onto the host's `McpToolRegistry` by `HostMcpToolProvider` (the normal
+path), straight onto the `boss` MCP server by `bossHostMcpTools` (only when the host has no
+registry, so an old host keeps them), and onto the voice surface by `BossVoiceToolSource`.
+
+The registry path is what makes them governed like every other plugin's tools: the per-tool
+kill-switch, RBAC, ALLOW/ASK/DENY with the approval dialog, the operation ledger, the host result
+cap, and `{{secret:<id>}}` references resolved by the host after approval (BossConsole#495 is the
+gap this closes for this plugin's own two tools; BossTerm's built-ins are still served by
+BossTerm's own server and are out of scope here). When they are in the registry, the bridge in
+`McpDynamicTools` is told to reserve only `bossTermOwnToolNames`, or it would skip exactly the
+tools it should carry; `RESERVED_TOOL_NAMES` keeps both sets for the fallback and for the voice
+surface, which filters registry tools by it so the host tools appear there once.
+
+The voice path is unchanged: BossTerm's voice executor calls `HostMcpTool.handler` directly under
+its own policy and never reaches the registry.
+
+### `run_in_sidebar` takes an `env` object
+
+Environment variables for the command, as NAME to value. The values never go on the command line:
+`SidebarEnvInjection` writes them to an owner-only file under `~/.boss/run/env/` (permissions set
+at creation on POSIX), and the shell runs `. '<file>' && rm -f '<file>' && <command>` (a
+PowerShell equivalent on Windows, untested). The scrollback, the runner entry and the tool's
+result carry the path and the variable NAMES, never a value. A value may be a `{{secret:<id>}}`
+reference, which the host resolves after the operator approves; that is how a credential reaches
+a shell command without the agent ever holding it.
+
+Not a secure enclave: the shell and every process it starts have the value, and `printenv`
+prints it. The clean long-term shape is an `environment` parameter on BossTerm's tab creation,
+which builds the PTY environment at spawn; that needs a BossTerm change and is the follow-up.
+
 ## Version Management
 
 **`build.gradle.kts` is the single source of truth for version.**

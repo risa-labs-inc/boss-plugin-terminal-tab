@@ -57,6 +57,9 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
     override val url: String = "https://github.com/risa-labs-inc/boss-plugin-terminal-tab"
 
     private var pluginContext: PluginContext? = null
+
+    /** Whether [HostMcpToolProvider] is registered; decides how [startMcpServer] wires the two host tools. */
+    private var hostToolsViaRegistry: Boolean = false
     private var terminalApi: TerminalTabPluginAPIImpl? = null
     private var setupStatusJob: Job? = null
 
@@ -150,6 +153,13 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         context.tabRegistry.registerTabType(TerminalTabType) { tabInfo, ctx ->
             TerminalTabComponent(ctx, tabInfo, context)
         }
+
+        // This plugin's own two tools go through the host registry when there is one, so an
+        // agent reaches them through the same governance path as every other plugin's tools
+        // (kill-switch, policy, approval, ledger, secret references - BossConsole#495). Only a
+        // host without a registry gets the older direct-on-server registration, in
+        // startMcpServer, so the tools never silently disappear on an old host.
+        hostToolsViaRegistry = registerHostToolsWithRegistry(context)
 
         startMcpServer()
 
@@ -276,10 +286,15 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
                 // endpoint as the built-in terminal tools (see McpHostTools.kt),
                 // plus the dynamic bridge for plugin-contributed tools.
                 additionalTools = { server ->
-                    bossHostMcpTools(server)
-                    if (toolRegistry != null) {
+                    if (hostToolsViaRegistry && toolRegistry != null) {
+                        // The bridge below carries run_in_sidebar and cli like any other
+                        // registry tool, so only BossTerm's own names stay reserved.
+                        installDynamicPluginTools(server, toolRegistry, mcpScope, reserved = bossTermOwnToolNames)
+                    } else if (toolRegistry != null) {
+                        bossHostMcpTools(server)
                         installDynamicPluginTools(server, toolRegistry, mcpScope)
                     } else {
+                        bossHostMcpTools(server)
                         mcpLogger.warn(
                             LogCategory.TERMINAL,
                             "mcpToolRegistry unavailable; plugin-contributed MCP tools disabled"
@@ -329,19 +344,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
      * class lives in the host classloader rather than boss-plugin-api. Falls back
      * to the same dev-mode rule if the host class isn't reachable.
      */
-    private fun bossTermSettingsDir(): java.io.File = try {
-        val clazz = Class.forName("ai.rever.boss.plugin.pathutils.BossDirectories")
-        val instance = clazz.getField("INSTANCE").get(null)
-        clazz.getMethod("resolve", String::class.java).invoke(instance, "bossterm") as java.io.File
-    } catch (_: Throwable) {
-        val root = if (isBossDevMode()) ".boss_debug" else ".boss"
-        java.io.File(java.io.File(System.getProperty("user.home"), root), "bossterm")
-    }
-
-    private fun isBossDevMode(): Boolean {
-        fun truthy(v: String?) = v?.trim()?.lowercase()?.let { it == "true" || it == "1" || it == "yes" } ?: false
-        return truthy(System.getProperty("boss.dev.mode")) || truthy(System.getenv("BOSS_DEV_MODE"))
-    }
+    private fun bossTermSettingsDir(): java.io.File = bossDataDir("bossterm")
 
     /**
      * BossConsole hosts pin the JVM-wide `pty4j.preferred.native.folder` and
@@ -423,9 +426,36 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
 
         // Unregister tab type when plugin is unloaded
         pluginContext?.tabRegistry?.unregisterTabType(TerminalTabType.typeId)
+        if (hostToolsViaRegistry) {
+            runCatching { pluginContext?.unregisterMcpToolProvider(HostMcpToolProvider.PROVIDER_ID) }
+            hostToolsViaRegistry = false
+        }
         terminalApi = null
         pluginContext = null
     }
+
+    /**
+     * Register [HostMcpToolProvider] and report whether it took. A host whose `PluginContext`
+     * predates the registry throws or hands back null here; the caller then falls back to the
+     * direct-on-server registration, which is what shipped before.
+     */
+    private fun registerHostToolsWithRegistry(context: PluginContext): Boolean =
+        try {
+            if (context.mcpToolRegistry == null) {
+                false
+            } else {
+                context.registerMcpToolProvider(HostMcpToolProvider())
+                mcpLogger.info(
+                    LogCategory.TERMINAL,
+                    "Host tools registered through the MCP tool registry",
+                    mapOf("providerId" to HostMcpToolProvider.PROVIDER_ID, "tools" to bossHostMcpToolDefs.size)
+                )
+                true
+            }
+        } catch (t: Throwable) {
+            mcpLogger.warn(LogCategory.TERMINAL, "Could not register host tools with the registry; using the server", error = t)
+            false
+        }
 }
 
 internal inline fun updateSetupStatusRegistration(
