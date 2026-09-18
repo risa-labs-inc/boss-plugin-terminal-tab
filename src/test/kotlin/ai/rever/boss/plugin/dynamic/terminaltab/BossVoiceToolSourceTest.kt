@@ -345,7 +345,10 @@ class BossVoiceToolSourceTest {
     @Test
     fun `the reserved set covers BossTerm's tools and this plugin's own`() {
         // The bridge and the voice surface share one answer to "whose name is this".
-        assertEquals(bossTermOwnToolNames + setOf("cli", "run_in_sidebar"), RESERVED_TOOL_NAMES)
+        assertEquals(
+            bossTermOwnToolNames + (bossHostMcpToolDefs + setupTerminalMcpToolDefs).map { it.name },
+            RESERVED_TOOL_NAMES,
+        )
     }
 
     @Test

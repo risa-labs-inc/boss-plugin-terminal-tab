@@ -10,7 +10,15 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os == 'ubuntu-latest' && 'test' || 'windows-script-tests' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
@@ -23,18 +31,13 @@ jobs:
 
       # The API is compileOnly at runtime because the host classloader provides
       # it, but compiling and testing happen outside the host, so the jar has to
-      # be on the classpath here. Resolution mirrors plugin-release.yml so CI
-      # and the release build agree on which API they are building against.
+      # be on the classpath here. Keep this literal pin aligned with build.yml
+      # and the manifest; PluginManifestTest verifies that they agree.
       - name: Download boss-plugin-api
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          API_VERSION: 'latest'
+          API_VERSION: '1.0.89'
         run: |
           set -euo pipefail
-          if [ "$API_VERSION" = "latest" ]; then
-            API_VERSION=$(gh api repos/risa-labs-inc/boss-plugin-api/releases/latest --jq '.tag_name' | sed 's/^v//')
-            echo "Resolved latest boss-plugin-api: $API_VERSION"
-          fi
           mkdir -p build/downloaded-deps
           # -f so an HTTP error is a failure rather than an error page silently
           # written to the jar path and a confusing compile error later.
@@ -46,6 +49,17 @@ jobs:
       # the one downloaded above. Actions sets it anyway; set explicitly so the
       # dependency is visible rather than inherited.
       - name: Compile and run tests
-        run: ./gradlew test --no-daemon
+        if: runner.os == 'Linux'
+        # The setup lifecycle tests render a real terminal. Provide a display
+        # on Linux and also validate the installable bundled artifact.
+        run: xvfb-run -a ./gradlew test buildPluginJar --no-daemon
+        env:
+          CI: 'true'
+
+      # Exercise generated scripts with actual Windows PowerShell 5.1. These
+      # fixtures only run harmless commands; they never install packages.
+      - name: Verify Windows scripts
+        if: runner.os == 'Windows'
+        run: ./gradlew test --tests '*OnboardingInstallScriptTest' --tests '*PluginManifestTest' buildPluginJar --no-daemon
         env:
           CI: 'true'

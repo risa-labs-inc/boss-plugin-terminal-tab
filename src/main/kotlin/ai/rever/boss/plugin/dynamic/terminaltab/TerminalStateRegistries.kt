@@ -29,7 +29,7 @@ private val logger = BossLogger.forComponent("TerminalStateRegistries")
  * Uses composite keys of format "$windowId:$terminalId" to ensure per-window isolation.
  */
 object TabbedTerminalStateRegistry {
-    private val states = mutableMapOf<String, TabbedTerminalState>()
+    private val states = java.util.concurrent.ConcurrentHashMap<String, TabbedTerminalState>()
 
     private val _resetGeneration = MutableStateFlow(0)
     val resetGeneration: StateFlow<Int> = _resetGeneration.asStateFlow()
@@ -41,7 +41,7 @@ object TabbedTerminalStateRegistry {
         // (inside the factory lambda so it runs once per state, not on cache hits).
         // This is what makes the terminal visible to the bossconsole MCP server
         // started by TerminalTabDynamicPlugin. register() is idempotent.
-        return states.getOrPut(key(windowId, terminalId)) {
+        return states.computeIfAbsent(key(windowId, terminalId)) {
             TabbedTerminalState().also { McpTerminalRegistry.register(it) }
         }
     }
@@ -57,7 +57,7 @@ object TabbedTerminalStateRegistry {
         }
     }
 
-    fun contains(windowId: String, terminalId: String): Boolean = key(windowId, terminalId) in states
+    fun contains(windowId: String, terminalId: String): Boolean = states.containsKey(key(windowId, terminalId))
 
     fun removeAllForWindow(windowId: String): Int {
         val prefix = "$windowId:"
