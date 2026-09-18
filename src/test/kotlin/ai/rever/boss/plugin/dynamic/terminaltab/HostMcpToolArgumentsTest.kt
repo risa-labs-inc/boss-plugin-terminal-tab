@@ -2,6 +2,7 @@ package ai.rever.boss.plugin.dynamic.terminaltab
 
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -40,6 +41,32 @@ class HostMcpToolArgumentsTest {
         } catch (t: Throwable) {
             fail("'$name' threw ${t::class.simpleName} out of the handler for $args: ${t.message}")
         }
+    }
+
+    @Test
+    fun `run_in_sidebar refuses an env that is not an object of strings, naming no value`() {
+        // A model that nests or lists where a flat object belongs. Each shape is refused as an
+        // error result before anything is written; the refusal never repeats a value.
+        listOf(
+            buildJsonObject { put("command", "ls"); put("env", buildJsonArray { add("TOKEN=x") }) },
+            buildJsonObject { put("command", "ls"); put("env", buildJsonObject { put("TOKEN", buildJsonObject { put("value", "x") }) }) },
+            buildJsonObject { put("command", "ls"); put("env", buildJsonObject { put("TOKEN", 42) }) },
+        ).forEach { args ->
+            val result = callOrFail("run_in_sidebar", args)
+            assertTrue(result.isError == true, "should refuse $args")
+            val text = result.content.joinToString { (it as? io.modelcontextprotocol.kotlin.sdk.types.TextContent)?.text ?: "" }
+            assertTrue(text.contains("env must be an object of string values"), text)
+        }
+    }
+
+    @Test
+    fun `run_in_sidebar refuses an invalid variable name before doing anything`() {
+        val args = buildJsonObject { put("command", "ls"); put("env", buildJsonObject { put("bad name", "hunter2") }) }
+        val result = callOrFail("run_in_sidebar", args)
+        assertTrue(result.isError == true)
+        val text = result.content.joinToString { (it as? io.modelcontextprotocol.kotlin.sdk.types.TextContent)?.text ?: "" }
+        assertTrue(text.contains("bad name"), text)
+        assertTrue(!text.contains("hunter2"), "a refusal names keys, never values: $text")
     }
 
     @Test
