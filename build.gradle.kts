@@ -120,7 +120,7 @@ group = "ai.rever.boss.plugin.dynamic"
 // (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.159.md).
 // 2.5.83: auto-bumped bundled BossTerm to 1.2.160
 // (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.160.md).
-version = "2.5.83"
+version = "2.5.84"
 
 java {
     toolchain {
