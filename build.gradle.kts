@@ -140,6 +140,44 @@ kotlin {
 val useLocalDependencies = System.getenv("CI") != "true"
 val bossPluginApiPath = "../boss-plugin-api"
 
+/**
+ * The newest api jar in the sibling checkout, for local development only (CI uses the
+ * downloaded jar).
+ *
+ * Deliberately not a hardcoded file name. `compileOnly(files(...))` does not fail on a
+ * path that does not exist, so a pin left behind by an api release turns every api symbol
+ * into "Unresolved reference 'api'" — a compile error that points at this plugin's source
+ * while the actual cause is a missing file named in this build script.
+ *
+ * Compiling against the newest jar does NOT lower the install floor: plugin.json declares
+ * apiVersion, and that is what gates hosts. Calling a symbol that only exists in a newer
+ * api compiles here and fails on an older host, so check the manifest before reaching for
+ * a new one.
+ *
+ * Resolved in a `provider` so the lookup runs at dependency-resolution time rather than
+ * configuration time: `clean`, `help` and `tasks` still work in a fresh checkout with no
+ * sibling jar built, and only a compilation fails, with the message below.
+ */
+val newestLocalApiJar = provider {
+    val apiJarPattern = Regex("""boss-plugin-api-(\d+)\.(\d+)\.(\d+)\.jar""")
+    file("$bossPluginApiPath/build/libs").listFiles()
+        ?.mapNotNull { jar -> apiJarPattern.matchEntire(jar.name)?.let { jar to it } }
+        // Compare (major, minor, patch) numerically: 1.0.9 sorts above 1.0.71 as a string,
+        // which would silently pick an ancient jar. The pattern also excludes the
+        // `-sources` and `-thin` classifier jars, which are not a compile classpath.
+        ?.maxWithOrNull(
+            compareBy(
+                { it.second.groupValues[1].toInt() },
+                { it.second.groupValues[2].toInt() },
+                { it.second.groupValues[3].toInt() },
+            ),
+        )?.first
+        ?: error(
+            "No boss-plugin-api jar in $bossPluginApiPath/build/libs — run ./gradlew build " +
+                "in the sibling boss-plugin-api checkout first.",
+        )
+}
+
 // BossTerm version is now private to this plugin. Bumping bossterm only
 // requires re-releasing this plugin, not BossConsole.
 // 1.2.162: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.162.md).
@@ -229,7 +267,7 @@ repositories {
 dependencies {
     if (useLocalDependencies) {
         // Local development: use boss-plugin-api JAR from sibling repo
-        compileOnly(files("$bossPluginApiPath/build/libs/boss-plugin-api-1.0.55.jar"))
+        compileOnly(files(newestLocalApiJar))
     } else {
         // CI: use downloaded JAR
         compileOnly(files("build/downloaded-deps/boss-plugin-api.jar"))
@@ -284,7 +322,7 @@ dependencies {
     // not on the test COMPILE classpath even though it is on the runtime one.
     testImplementation(compose.ui)
     if (useLocalDependencies) {
-        testImplementation(files("$bossPluginApiPath/build/libs/boss-plugin-api-1.0.55.jar"))
+        testImplementation(files(newestLocalApiJar))
     } else {
         testImplementation(files("build/downloaded-deps/boss-plugin-api.jar"))
     }
