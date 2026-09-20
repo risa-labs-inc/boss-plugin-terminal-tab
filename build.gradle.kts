@@ -157,15 +157,26 @@ val bossPluginApiPath = "../boss-plugin-api"
  * Resolved in a `provider` so the lookup runs at dependency-resolution time rather than
  * configuration time: `clean`, `help` and `tasks` still work in a fresh checkout with no
  * sibling jar built, and only a compilation fails, with the message below.
+ *
+ * The directory and the pattern are resolved once at configuration time and only *read*
+ * inside the provider. `provider {}` is not memoized, so anything built inside it is
+ * rebuilt on every query — once per configuration that resolves this, which is no drama
+ * for one Regex but is pointless. (Both forms are clean under `--configuration-cache` on
+ * Gradle 9.3: this lookup runs while the task graph is being calculated, not at execution
+ * time, so it was never the unsupported `Project` access it resembles.)
  */
+val bossPluginApiLibsDir = file("$bossPluginApiPath/build/libs")
+
+// (major, minor, patch) only — this deliberately does not match the `-sources` or `-thin`
+// classifier jars, neither of which is a compile classpath.
+val bossPluginApiJarPattern = Regex("""boss-plugin-api-(\d+)\.(\d+)\.(\d+)\.jar""")
+
 val newestLocalApiJar = provider {
-    val apiJarPattern = Regex("""boss-plugin-api-(\d+)\.(\d+)\.(\d+)\.jar""")
-    file("$bossPluginApiPath/build/libs").listFiles()
-        ?.mapNotNull { jar -> apiJarPattern.matchEntire(jar.name)?.let { jar to it } }
+    bossPluginApiLibsDir.listFiles().orEmpty()
+        .mapNotNull { jar -> bossPluginApiJarPattern.matchEntire(jar.name)?.let { jar to it } }
         // Compare (major, minor, patch) numerically: 1.0.9 sorts above 1.0.71 as a string,
-        // which would silently pick an ancient jar. The pattern also excludes the
-        // `-sources` and `-thin` classifier jars, which are not a compile classpath.
-        ?.maxWithOrNull(
+        // which would silently pick an ancient jar.
+        .maxWithOrNull(
             compareBy(
                 { it.second.groupValues[1].toInt() },
                 { it.second.groupValues[2].toInt() },
@@ -173,8 +184,13 @@ val newestLocalApiJar = provider {
             ),
         )?.first
         ?: error(
-            "No boss-plugin-api jar in $bossPluginApiPath/build/libs — run ./gradlew build " +
-                "in the sibling boss-plugin-api checkout first.",
+            // Name what is actually there. "Run ./gradlew build in the sibling checkout"
+            // is unhelpful advice on its own when the directory is full of jars that the
+            // pattern rejects — a SNAPSHOT build, or only classifier jars — because the
+            // developer has just done exactly that.
+            "No boss-plugin-api-<major>.<minor>.<patch>.jar in $bossPluginApiLibsDir " +
+                "(found: ${bossPluginApiLibsDir.list()?.sorted()?.joinToString()?.ifEmpty { null } ?: "nothing"}) " +
+                "— run ./gradlew build in the sibling boss-plugin-api checkout first.",
         )
 }
 
