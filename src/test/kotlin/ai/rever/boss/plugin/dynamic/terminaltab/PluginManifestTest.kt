@@ -24,16 +24,18 @@ class PluginManifestTest {
         assertTrue(minimum.isNotBlank(), "A missing gate offers the plugin to incompatible hosts")
         val compiled = assertNotNull(System.getProperty("bossPluginApiVersion"), "Run this test via Gradle")
         assertEquals(compiled, minimum, "minApiVersion must match the compiled API floor")
+        // Equality also guarantees minApiVersion <= apiVersion.
         assertEquals(compiled, manifest["apiVersion"]?.jsonPrimitive?.content, "apiVersion must match the compile pin")
 
         val root = File(assertNotNull(System.getProperty("pluginProjectDir"), "Run this test via Gradle"))
         for ((workflow, key) in listOf("build.yml" to "boss_plugin_api_version", "test.yml" to "API_VERSION")) {
             val file = File(root, ".github/workflows/$workflow")
             assertTrue(file.isFile, "Required API workflow is missing: $file")
-            val pins = Regex("(?m)^\\s*$key:([^\\r\\n]*)$").findAll(file.readText()).map {
+            val text = file.readText()
+            val pins = Regex("(?m)^\\s*$key:([^\\r\\n]*)$").findAll(text).map {
                 it.groupValues[1].substringBefore('#').trim().removeSurrounding("\"").removeSurrounding("'")
             }.toList()
-            assertEquals(listOf(compiled), pins, "$workflow must declare exactly one API pin matching the gate")
+            assertEquals(listOf(compiled), pins, "$workflow must declare exactly one API pin matching the gate (no duplicates)")
         }
     }
 }

@@ -56,15 +56,23 @@ class HostTerminalThemeBridgeTest {
 
     @Test
     fun `a non-BOSS builtin floor does not hijack the match`() {
-        // The point of the boss- restriction: a bundled third-party theme must
-        // never lend its whole palette to a host theme that happens to share a
-        // floor with it.
+        // Background colors are not identities: Liquid Glass deliberately shares
+        // Blueprint's floor. A shared floor must resolve to the BOSS palette;
+        // a floor owned only by non-BOSS themes must still synthesize.
+        val bossThemes = BuiltinThemes.ALL.filter { it.id.startsWith("boss-") }
         val others = BuiltinThemes.ALL.filterNot { it.id.startsWith("boss-") }
         for (theme in others) {
-            assertNull(
-                curatedBossThemeFor(theme.background),
-                "${theme.id} is not a BOSS identity and must not be selectable by floor",
-            )
+            val resolved = curatedBossThemeFor(theme.background)
+            val sharedBossTheme = bossThemes.firstOrNull {
+                it.background.equals(theme.background, ignoreCase = true)
+            }
+            if (sharedBossTheme == null) {
+                assertNull(resolved, "${theme.id}: a non-BOSS-only floor must not match")
+            } else {
+                assertNotNull(resolved, "${theme.id}: a shared BOSS floor must match")
+                assertEquals(sharedBossTheme.id, resolved.id)
+                assertTrue(resolved.id.startsWith("boss-"), "${theme.id} must not supply the palette")
+            }
         }
     }
 

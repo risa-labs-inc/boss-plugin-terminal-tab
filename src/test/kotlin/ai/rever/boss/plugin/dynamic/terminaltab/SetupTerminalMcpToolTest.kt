@@ -3,9 +3,11 @@ package ai.rever.boss.plugin.dynamic.terminaltab
 import ai.rever.bossterm.compose.mcp.BossTermMcpConfig
 import ai.rever.bossterm.compose.mcp.BossTermMcpServer
 import ai.rever.bossterm.compose.settings.SettingsManager
+import io.modelcontextprotocol.kotlin.sdk.server.ClientConnection
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequestParams
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
+import java.lang.reflect.Proxy
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -27,6 +29,19 @@ class SetupTerminalMcpToolTest {
     private fun server() = BossTermMcpServer(
         config = BossTermMcpConfig(additionalTools = bossHostMcpTools),
     ).createServer()
+
+    /**
+     * MCP SDK 0.15 hands every tool handler the calling [ClientConnection]. These tools
+     * answer from the setup bridge alone - none of them elicits, logs or notifies - so
+     * the test passes a proxy that fails loudly the moment one reaches for the client,
+     * rather than a stub whose silent defaults would hide that.
+     */
+    private val noClientConnection = Proxy.newProxyInstance(
+        ClientConnection::class.java.classLoader,
+        arrayOf(ClientConnection::class.java),
+    ) { _, method, _ ->
+        error("setup tools must answer without the client connection, but called ${method.name}()")
+    } as ClientConnection
 
     @Test
     fun `dedicated setup terminal tools are registered on actual MCP server`() {
@@ -70,7 +85,7 @@ class SetupTerminalMcpToolTest {
     fun `endpoint refuses a stale write instead of routing to another terminal`() {
         val tool = server().tools.getValue("setup_terminal_send_input")
         val result = runBlocking {
-            tool.handler(CallToolRequest(CallToolRequestParams(
+            tool.handler(noClientConnection, CallToolRequest(CallToolRequestParams(
                 name = "setup_terminal_send_input",
                 arguments = buildJsonObject {
                     put("terminal_id", "stale-terminal")
@@ -107,7 +122,7 @@ class SetupTerminalMcpToolTest {
         }
         val mcp = server()
         fun call(name: String, args: kotlinx.serialization.json.JsonObject) = runBlocking {
-            mcp.tools.getValue(name).handler(CallToolRequest(CallToolRequestParams(name = name, arguments = args)))
+            mcp.tools.getValue(name).handler(noClientConnection, CallToolRequest(CallToolRequestParams(name = name, arguments = args)))
         }
         val readArguments = buildJsonObject {
             put("terminal_id", "live-pty"); put("request_id", "accepted-request"); put("lines", 20)
