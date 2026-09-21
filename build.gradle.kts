@@ -110,7 +110,19 @@ group = "ai.rever.boss.plugin.dynamic"
 // (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.154.md).
 // 2.5.70: auto-bumped bundled BossTerm to 1.2.155
 // (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.155.md).
-version = "2.5.74"
+// 2.5.75: auto-bumped bundled BossTerm to 1.2.156
+// (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.156.md).
+// 2.5.77: auto-bumped bundled BossTerm to 1.2.157
+// (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.157.md).
+// 2.5.79: auto-bumped bundled BossTerm to 1.2.158
+// (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.158.md).
+// 2.5.81: auto-bumped bundled BossTerm to 1.2.159
+// (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.159.md).
+// 2.5.83: auto-bumped bundled BossTerm to 1.2.160
+// (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.160.md).
+// 2.5.85: auto-bumped bundled BossTerm to 1.2.162
+// (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.162.md).
+version = "2.5.88"
 
 java {
     toolchain {
@@ -132,8 +144,54 @@ val bossPluginApiPath = "../boss-plugin-api"
 // bypass the gate. Keep both workflow pins aligned with this version.
 val bossPluginApiVersion = "1.0.88"
 
+/**
+ * The api jar this plugin compiles against locally: exactly [bossPluginApiVersion], the
+ * version the manifest gates on. CI downloads that same version, and `PluginManifestTest`
+ * holds the two workflow pins and both manifest fields to it.
+ *
+ * There are two ways to get this wrong, one on each side, and this shape is the only one
+ * that avoids both:
+ *
+ * - **Resolving whatever jar is newest silently raises the floor.** A symbol added to the
+ *   api *after* the gate then compiles here, ships, and throws `NoSuchMethodError` on a
+ *   host sitting at the declared minimum. A gate is only worth what the compile classpath
+ *   proves, so the classpath has to be the floor, not the ceiling.
+ * - **Naming a jar path and nothing else silently empties the classpath.**
+ *   `compileOnly(files(...))` does not fail on a path that does not exist, so a jar that
+ *   is not there turns every api symbol into "Unresolved reference 'api'" — around 40
+ *   errors pointing at this plugin's source while the cause is a filename in this build
+ *   script. That is exactly what the stale 1.0.55 pin did before it was replaced.
+ *
+ * So: pin the version, and make its absence say so, naming what is actually in the
+ * directory. Resolved in a `provider` so the lookup runs at dependency-resolution time
+ * rather than configuration time — `clean`, `help` and `tasks` still work in a checkout
+ * with no sibling jar built, and only a compilation fails. (Clean under
+ * `--configuration-cache` on Gradle 9.3: this runs while the task graph is calculated,
+ * not at execution time, so it is not the unsupported `Project` access it resembles.)
+ */
+val bossPluginApiLibsDir = file("$bossPluginApiPath/build/libs")
+
+val pinnedLocalApiJar = provider {
+    bossPluginApiLibsDir.resolve("boss-plugin-api-$bossPluginApiVersion.jar").takeIf { it.isFile }
+        ?: error(
+            "No boss-plugin-api-$bossPluginApiVersion.jar in $bossPluginApiLibsDir " +
+                "(found: ${bossPluginApiLibsDir.list()?.sorted()?.joinToString()?.ifEmpty { null } ?: "nothing"}). " +
+                "This plugin compiles against the api version it gates on, so the newest jar " +
+                "in that directory is deliberately not a substitute: build v$bossPluginApiVersion " +
+                "in the sibling boss-plugin-api checkout, or raise bossPluginApiVersion here " +
+                "together with plugin.json and both workflow pins — PluginManifestTest checks " +
+                "that they all agree.",
+        )
+}
+
 // BossTerm version is now private to this plugin. Bumping bossterm only
 // requires re-releasing this plugin, not BossConsole.
+// 1.2.162: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.162.md).
+// 1.2.160: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.160.md).
+// 1.2.159: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.159.md).
+// 1.2.158: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.158.md).
+// 1.2.157: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.157.md).
+// 1.2.156: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.156.md).
 // 1.2.155: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.155.md).
 // 1.2.154: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.154.md).
 // 1.2.153: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.153.md).
@@ -196,7 +254,7 @@ val bossPluginApiVersion = "1.0.88"
 // command palette, workflows, history search, session restore; compose-ui
 // compiles with -Xjvm-default=all (no $DefaultImpls bridges). 1.1.101 added
 // the `bossterm.settings.dir` relocation hook this plugin relies on.
-val bosstermVersion = "1.2.155"
+val bosstermVersion = "1.2.162"
 
 repositories {
     google()
@@ -215,7 +273,7 @@ repositories {
 dependencies {
     if (useLocalDependencies) {
         // Local development: use boss-plugin-api JAR from sibling repo
-        compileOnly(files("$bossPluginApiPath/build/libs/boss-plugin-api-$bossPluginApiVersion.jar"))
+        compileOnly(files(pinnedLocalApiJar))
     } else {
         // CI: use downloaded JAR
         compileOnly(files("build/downloaded-deps/boss-plugin-api.jar"))
@@ -270,7 +328,7 @@ dependencies {
     // not on the test COMPILE classpath even though it is on the runtime one.
     testImplementation(compose.ui)
     if (useLocalDependencies) {
-        testImplementation(files("$bossPluginApiPath/build/libs/boss-plugin-api-$bossPluginApiVersion.jar"))
+        testImplementation(files(pinnedLocalApiJar))
     } else {
         testImplementation(files("build/downloaded-deps/boss-plugin-api.jar"))
     }
