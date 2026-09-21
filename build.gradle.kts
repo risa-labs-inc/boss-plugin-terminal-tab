@@ -139,58 +139,48 @@ kotlin {
 // Auto-detect CI environment
 val useLocalDependencies = System.getenv("CI") != "true"
 val bossPluginApiPath = "../boss-plugin-api"
+// 1.0.88 is required by renameTab, tabActivityFlow, and initialCommand split overloads.
+// Compile against the minimum supported API so newer symbols cannot silently
+// bypass the gate. Keep both workflow pins aligned with this version.
+val bossPluginApiVersion = "1.0.88"
 
 /**
- * The newest api jar in the sibling checkout, for local development only (CI uses the
- * downloaded jar).
+ * The api jar this plugin compiles against locally: exactly [bossPluginApiVersion], the
+ * version the manifest gates on. CI downloads that same version, and `PluginManifestTest`
+ * holds the two workflow pins and both manifest fields to it.
  *
- * Deliberately not a hardcoded file name. `compileOnly(files(...))` does not fail on a
- * path that does not exist, so a pin left behind by an api release turns every api symbol
- * into "Unresolved reference 'api'" — a compile error that points at this plugin's source
- * while the actual cause is a missing file named in this build script.
+ * There are two ways to get this wrong, one on each side, and this shape is the only one
+ * that avoids both:
  *
- * Compiling against the newest jar does NOT lower the install floor: plugin.json declares
- * apiVersion, and that is what gates hosts. Calling a symbol that only exists in a newer
- * api compiles here and fails on an older host, so check the manifest before reaching for
- * a new one.
+ * - **Resolving whatever jar is newest silently raises the floor.** A symbol added to the
+ *   api *after* the gate then compiles here, ships, and throws `NoSuchMethodError` on a
+ *   host sitting at the declared minimum. A gate is only worth what the compile classpath
+ *   proves, so the classpath has to be the floor, not the ceiling.
+ * - **Naming a jar path and nothing else silently empties the classpath.**
+ *   `compileOnly(files(...))` does not fail on a path that does not exist, so a jar that
+ *   is not there turns every api symbol into "Unresolved reference 'api'" — around 40
+ *   errors pointing at this plugin's source while the cause is a filename in this build
+ *   script. That is exactly what the stale 1.0.55 pin did before it was replaced.
  *
- * Resolved in a `provider` so the lookup runs at dependency-resolution time rather than
- * configuration time: `clean`, `help` and `tasks` still work in a fresh checkout with no
- * sibling jar built, and only a compilation fails, with the message below.
- *
- * The directory and the pattern are resolved once at configuration time and only *read*
- * inside the provider. `provider {}` is not memoized, so anything built inside it is
- * rebuilt on every query — once per configuration that resolves this, which is no drama
- * for one Regex but is pointless. (Both forms are clean under `--configuration-cache` on
- * Gradle 9.3: this lookup runs while the task graph is being calculated, not at execution
- * time, so it was never the unsupported `Project` access it resembles.)
+ * So: pin the version, and make its absence say so, naming what is actually in the
+ * directory. Resolved in a `provider` so the lookup runs at dependency-resolution time
+ * rather than configuration time — `clean`, `help` and `tasks` still work in a checkout
+ * with no sibling jar built, and only a compilation fails. (Clean under
+ * `--configuration-cache` on Gradle 9.3: this runs while the task graph is calculated,
+ * not at execution time, so it is not the unsupported `Project` access it resembles.)
  */
 val bossPluginApiLibsDir = file("$bossPluginApiPath/build/libs")
 
-// (major, minor, patch) only — this deliberately does not match the `-sources` or `-thin`
-// classifier jars, neither of which is a compile classpath.
-val bossPluginApiJarPattern = Regex("""boss-plugin-api-(\d+)\.(\d+)\.(\d+)\.jar""")
-
-val newestLocalApiJar = provider {
-    bossPluginApiLibsDir.listFiles().orEmpty()
-        .mapNotNull { jar -> bossPluginApiJarPattern.matchEntire(jar.name)?.let { jar to it } }
-        // Compare (major, minor, patch) numerically: 1.0.9 sorts above 1.0.71 as a string,
-        // which would silently pick an ancient jar.
-        .maxWithOrNull(
-            compareBy(
-                { it.second.groupValues[1].toInt() },
-                { it.second.groupValues[2].toInt() },
-                { it.second.groupValues[3].toInt() },
-            ),
-        )?.first
+val pinnedLocalApiJar = provider {
+    bossPluginApiLibsDir.resolve("boss-plugin-api-$bossPluginApiVersion.jar").takeIf { it.isFile }
         ?: error(
-            // Name what is actually there. "Run ./gradlew build in the sibling checkout"
-            // is unhelpful advice on its own when the directory is full of jars that the
-            // pattern rejects — a SNAPSHOT build, or only classifier jars — because the
-            // developer has just done exactly that.
-            "No boss-plugin-api-<major>.<minor>.<patch>.jar in $bossPluginApiLibsDir " +
-                "(found: ${bossPluginApiLibsDir.list()?.sorted()?.joinToString()?.ifEmpty { null } ?: "nothing"}) " +
-                "— run ./gradlew build in the sibling boss-plugin-api checkout first.",
+            "No boss-plugin-api-$bossPluginApiVersion.jar in $bossPluginApiLibsDir " +
+                "(found: ${bossPluginApiLibsDir.list()?.sorted()?.joinToString()?.ifEmpty { null } ?: "nothing"}). " +
+                "This plugin compiles against the api version it gates on, so the newest jar " +
+                "in that directory is deliberately not a substitute: build v$bossPluginApiVersion " +
+                "in the sibling boss-plugin-api checkout, or raise bossPluginApiVersion here " +
+                "together with plugin.json and both workflow pins — PluginManifestTest checks " +
+                "that they all agree.",
         )
 }
 
@@ -283,7 +273,7 @@ repositories {
 dependencies {
     if (useLocalDependencies) {
         // Local development: use boss-plugin-api JAR from sibling repo
-        compileOnly(files(newestLocalApiJar))
+        compileOnly(files(pinnedLocalApiJar))
     } else {
         // CI: use downloaded JAR
         compileOnly(files("build/downloaded-deps/boss-plugin-api.jar"))
@@ -338,7 +328,7 @@ dependencies {
     // not on the test COMPILE classpath even though it is on the runtime one.
     testImplementation(compose.ui)
     if (useLocalDependencies) {
-        testImplementation(files(newestLocalApiJar))
+        testImplementation(files(pinnedLocalApiJar))
     } else {
         testImplementation(files("build/downloaded-deps/boss-plugin-api.jar"))
     }
@@ -346,6 +336,12 @@ dependencies {
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+    inputs.files(".github/workflows/build.yml", ".github/workflows/test.yml")
+        .withPropertyName("apiPinWorkflows")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    systemProperty("pluginVersion", version.toString())
+    systemProperty("bossPluginApiVersion", bossPluginApiVersion)
+    systemProperty("pluginProjectDir", projectDir.absolutePath)
 }
 
 // Task to build plugin JAR with compiled classes + bossterm-compose bundled.
@@ -363,9 +359,6 @@ tasks.register<Jar>("buildPluginJar") {
 
     // Include compiled classes
     from(sourceSets.main.get().output)
-
-    // Include plugin manifest
-    from("src/main/resources")
 
     // Bundle bossterm-compose + its transitive native-access deps (bossterm-core,
     // pty4j, JNA, ICU4J, purejavacomm). Compose Multiplatform / decompose /
