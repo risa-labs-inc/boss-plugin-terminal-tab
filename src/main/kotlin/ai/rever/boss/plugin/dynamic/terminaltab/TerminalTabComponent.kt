@@ -44,6 +44,9 @@ import kotlinx.coroutines.launch
  *
  * The host tab title is kept in sync from [ensureTitleSync], which runs in the
  * component's own scope so background (unselected) tabs keep updating too.
+ *
+ * The host tab lives only as long as its inner terminal tabs: closing the last
+ * one (or exiting its shell) closes the host tab too.
  */
 class TerminalTabComponent(
     private val ctx: ComponentContext,
@@ -187,6 +190,11 @@ class TerminalTabComponent(
             // shell exited, or dragged out) - never on dispose/reset, which use
             // disposeAll(). An empty terminal has nothing to show, so close the
             // host tab the way standalone BossTerm closes its window.
+            // Checked against bossterm 1.2.166: only TabController.closeTab /
+            // extractTab call onLastTabClosed, and shell-exit closes hop to
+            // Dispatchers.Main first. Re-check on a bossterm bump (see
+            // bosstermVersion in build.gradle.kts), or a window close / reset
+            // could cascade into closing every terminal host tab.
             onExit = { tabUpdateProvider?.closeTab() },
             onShowSettings = {
                 val windowId = context.windowId
