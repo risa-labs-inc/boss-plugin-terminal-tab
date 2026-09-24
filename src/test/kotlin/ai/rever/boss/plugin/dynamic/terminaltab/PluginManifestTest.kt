@@ -19,7 +19,15 @@ class PluginManifestTest {
             manifest["version"]?.jsonPrimitive?.content,
             "processResources must substitute the project version",
         )
-        assertTrue(assertNotNull(manifest["minBossVersion"]).jsonPrimitive.content.isNotBlank())
+        val minBoss = assertNotNull(manifest["minBossVersion"]).jsonPrimitive.content
+        assertTrue(minBoss.isNotBlank())
+        // BossConsole first handles `bossterm.setup.open` in 9.5.20, and the plugin no longer renders
+        // its own wizard, so an older host would install this plugin and show no setup at all.
+        val firstDifference = minBoss.split('.').map(String::toInt).zip(listOf(9, 5, 20)).firstOrNull { (a, b) -> a != b }
+        assertTrue(
+            firstDifference == null || firstDifference.first > firstDifference.second,
+            "minBossVersion $minBoss is below 9.5.20, the first host with the setup handler",
+        )
         val minimum = assertNotNull(manifest["minApiVersion"]).jsonPrimitive.content
         assertTrue(minimum.isNotBlank(), "A missing gate offers the plugin to incompatible hosts")
         val compiled = assertNotNull(System.getProperty("bossPluginApiVersion"), "Run this test via Gradle")

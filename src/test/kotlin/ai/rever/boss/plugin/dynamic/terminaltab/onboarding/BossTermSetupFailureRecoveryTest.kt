@@ -107,6 +107,60 @@ class BossTermSetupFailureRecoveryTest {
     }
 
     @Test
+    fun `the session never reads as idle between Fluck ending and verification`() = runComposeUiTest {
+        if (TargetOs.current().isWindows) return@runComposeUiTest
+        BossTermSetupController.dropSudoCredentialsScriptForTest = "#!/bin/bash\n:\n"
+        val requestId = AtomicReference<String>()
+        val resume = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val supervisor = object : BossTermSetupSupervisor {
+            override suspend fun start(sessionId: String, windowId: String, tasks: List<SetupTaskState>) = true
+
+            override suspend fun debugAndFix(request: SetupDebugRequest, onAccepted: () -> Unit): SetupDebugResult {
+                requestId.set(request.requestId)
+                onAccepted()
+                resume.await()
+                return SetupDebugResult(completed = true)
+            }
+
+            override fun resumeDebug(id: String): Boolean = id == requestId.get() && resume.complete(Unit)
+        }
+
+        assertTrue(
+            BossTermSetupController.startTerminalTaskForTest(
+                command = "printf 'TASK_RUNNING\\n'; sleep 60",
+                verificationCommand = "true",
+                supervisor = supervisor,
+            ),
+        )
+        showSetupTerminal()
+        awaitCondition { "TASK_RUNNING" in BossTermSetupController.terminalCapturedOutputForTest() }
+        awaitCondition { BossTermSetupController.canAskFluckToDebugAndFix() }
+        assertTrue(BossTermSetupController.askFluckToDebugAndFix())
+        awaitCondition { BossTermSetupController.state.value.agentDebugActive }
+        assertTrue(BossTermSetupController.resumeActiveDebugAndVerify())
+
+        // The first state after the agent session ends. It must already say "verifying": the
+        // Ctrl-C, the 150 ms settle and the boundary probe all follow, and an idle-looking state
+        // there let Retry start a second session on top of this one.
+        val deadline = System.nanoTime() + 15_000_000_000
+        var afterAgent = BossTermSetupController.state.value
+        while (afterAgent.agentDebugActive && System.nanoTime() < deadline) {
+            Thread.sleep(1)
+            afterAgent = BossTermSetupController.state.value
+        }
+        assertFalse(afterAgent.agentDebugActive, "Fluck session never ended: $afterAgent")
+        assertTrue(
+            afterAgent.agentDebugAwaitingVerification || afterAgent.finished,
+            "session read as idle after Fluck ended: $afterAgent",
+        )
+        assertTrue(afterAgent.isRunning || afterAgent.finished, "state=$afterAgent")
+
+        awaitCondition { BossTermSetupController.state.value.finished }
+        assertFalse(BossTermSetupController.state.value.agentDebugAwaitingVerification)
+        cleanup()
+    }
+
+    @Test
     fun `the real drop script uses sudo -K and succeeds where sudo is absent`() {
         if (TargetOs.current().isWindows) return
         val script = BossTermSetupController.DROP_SUDO_CREDENTIALS_SCRIPT

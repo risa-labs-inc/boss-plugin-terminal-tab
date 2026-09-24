@@ -187,6 +187,11 @@ object BossTermSetupController {
         if (!supportsSelections(selections, TargetOs.current())) return false
 
         val sessionId = UUID.randomUUID().toString()
+        // A retry can start while the previous session's coroutine is still inside runCommand
+        // (e.g. just after a Fluck handoff). Cancel it so it cannot keep driving the terminal;
+        // its cleanup checks the session and leaves the new one alone. Not joined: this runs on
+        // the caller's thread and the job needs the IO dispatcher to unwind.
+        activeSessionJob?.cancel()
         disposeTerminal()
         terminalReady = CompletableDeferred()
         synchronized(terminalLock) { pendingTerminalCommand = null }
@@ -655,12 +660,15 @@ object BossTermSetupController {
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
-            synchronized(terminalLock) {
-                terminalStateOrNull()?.let(McpTerminalRegistry::unregister)
-                activeHandoffRequestId = null
+            // The handoff fields are shared, not per session: leave a newer session's alone.
+            if (_state.value.sessionId == sessionId) {
+                synchronized(terminalLock) {
+                    terminalStateOrNull()?.let(McpTerminalRegistry::unregister)
+                    activeHandoffRequestId = null
+                }
+                handoffRequestedSessionId = null
+                resumeDebugAndVerifyRequested = false
             }
-            handoffRequestedSessionId = null
-            resumeDebugAndVerifyRequested = false
             updateSession(sessionId) { current ->
                 current.copy(
                     tasks = current.tasks.map { task ->
@@ -758,10 +766,14 @@ object BossTermSetupController {
             activeHandoffRequestId = null
         }
         resumeDebugAndVerifyRequested = false
+        val verifying = result.completed && resumeWasRequested
         updateSession(sessionId) {
             it.copy(
                 agentDebugRequestInFlight = false,
                 agentDebugActive = false,
+                // In the same update that ends the agent session, so the session never reads as
+                // idle between the two: that gap is where Retry could start a second session.
+                agentDebugAwaitingVerification = verifying,
                 agentDebugError = result.error,
             )
         }
@@ -772,23 +784,28 @@ object BossTermSetupController {
             return CommandResult(HANDOFF_FAILED_EXIT_CODE, "Fluck debugging ended without an explicit resume")
         }
         resumeDebugAndVerifyRequested = false
-        terminalBoundarySafe = false
-        terminalStateOrNull()?.sendInput(byteArrayOf(0x03), terminalId)
-        delay(TERMINAL_BOUNDARY_PROBE_DELAY_MS)
-        val boundary = withTimeoutOrNull(HANDOFF_BOUNDARY_TIMEOUT_MS) {
-            runCommand(if (TargetOs.current().isWindows) "\$null = 0" else ":", sessionId)
-        }
-        if (boundary?.exitCode != 0 || !terminalBoundarySafe) {
-            return CommandResult(
-                HANDOFF_FAILED_EXIT_CODE,
-                "Could not confirm that the terminal returned to its shell after Fluck debugging",
-            )
-        }
-        val verification = plan.verificationCommand
-            ?: return CommandResult(HANDOFF_FAILED_EXIT_CODE, "This setup step has no safe verification command")
-        updateSession(sessionId) { it.copy(agentDebugAwaitingVerification = true) }
-        appendOutput(sessionId, "Verifying Fluck's fix for ${plan.state.title}")
-        return runCommand(verification, sessionId).also {
+        // agentDebugAwaitingVerification is already true (set above): it covers the Ctrl-C and
+        // the boundary probe as well as the verifier. Before, it was set only after the probe, so
+        // with agentDebugActive already false the failed session read as idle
+        // (isRunning == false) and Retry could start a new session mid-probe.
+        try {
+            terminalBoundarySafe = false
+            terminalStateOrNull()?.sendInput(byteArrayOf(0x03), terminalId)
+            delay(TERMINAL_BOUNDARY_PROBE_DELAY_MS)
+            val boundary = withTimeoutOrNull(HANDOFF_BOUNDARY_TIMEOUT_MS) {
+                runCommand(if (TargetOs.current().isWindows) "\$null = 0" else ":", sessionId)
+            }
+            if (boundary?.exitCode != 0 || !terminalBoundarySafe) {
+                return CommandResult(
+                    HANDOFF_FAILED_EXIT_CODE,
+                    "Could not confirm that the terminal returned to its shell after Fluck debugging",
+                )
+            }
+            val verification = plan.verificationCommand
+                ?: return CommandResult(HANDOFF_FAILED_EXIT_CODE, "This setup step has no safe verification command")
+            appendOutput(sessionId, "Verifying Fluck's fix for ${plan.state.title}")
+            return runCommand(verification, sessionId)
+        } finally {
             updateSession(sessionId) { current -> current.copy(agentDebugAwaitingVerification = false) }
         }
     }
@@ -861,6 +878,7 @@ object BossTermSetupController {
     ): Boolean {
         if (_state.value.isRunning) return false
         val sessionId = UUID.randomUUID().toString()
+        activeSessionJob?.cancel()
         disposeTerminal()
         terminalReady = CompletableDeferred()
         synchronized(terminalLock) { pendingTerminalCommand = null }
@@ -1035,7 +1053,7 @@ object BossTermSetupController {
     private fun withShellEnvironment(script: String, shell: ShellChoice, targetOs: TargetOs): String =
         if (targetOs.isWindows || shell.command.isBlank()) script else "export SHELL=\"\$(command -v ${shell.command})\"\n$script"
 
-    private fun ensurePromptActivationCommand(
+    internal fun ensurePromptActivationCommand(
         choice: ShellCustomizationChoice,
         shell: ShellChoice,
         targetOs: TargetOs,
@@ -1047,17 +1065,22 @@ object BossTermSetupController {
             ShellChoice.FISH -> "\$HOME/.config/fish/config.fish"
             else -> return ""
         }
-        val line = when (choice) {
+        // The marker decides whether the framework is already activated. It is deliberately looser
+        // than the line: the Oh My Zsh installer writes `source $ZSH/oh-my-zsh.sh` and Prezto's
+        // runcom `source "${ZDOTDIR:-$HOME}/.zprezto/init.zsh"`, so matching the exact line
+        // appended a second activation (and for Prezto, whose ~/.zshrc is a symlink into its
+        // checkout, wrote it into the Prezto git tree). Same markers as promptVerification.
+        val (line, marker) = when (choice) {
             ShellCustomizationChoice.STARSHIP -> when (shell) {
                 ShellChoice.FISH -> "starship init fish | source"
                 else -> "eval \"\$(starship init ${shell.command})\""
-            }
-            ShellCustomizationChoice.OH_MY_ZSH -> "source \$HOME/.oh-my-zsh/oh-my-zsh.sh"
-            ShellCustomizationChoice.PREZTO -> "source \$HOME/.zprezto/init.zsh"
+            } to "starship init"
+            ShellCustomizationChoice.OH_MY_ZSH -> "source \$HOME/.oh-my-zsh/oh-my-zsh.sh" to "oh-my-zsh.sh"
+            ShellCustomizationChoice.PREZTO -> "source \$HOME/.zprezto/init.zsh" to "zprezto/init.zsh"
             else -> return ""
         }
         return "\nmkdir -p \"\$(dirname \"$file\")\" && touch \"$file\" && { " +
-            "grep -Fq '$line' \"$file\" || echo '$line' >> \"$file\"; }\n"
+            "grep -Fq '$marker' \"$file\" || echo '$line' >> \"$file\"; }\n"
     }
 
     private fun resolvePackageManager(
@@ -1321,7 +1344,10 @@ object BossTermSetupController {
             synchronized(terminalLock) {
                 if (pendingTerminalCommand === pending) pendingTerminalCommand = null
             }
-            terminalStateOrNull()?.sendInput(byteArrayOf(0x03), terminalTabId ?: "")
+            // A newer session (retry) owns the terminal now: don't Ctrl-C into it.
+            if (_state.value.sessionId == sessionId) {
+                terminalStateOrNull()?.sendInput(byteArrayOf(0x03), terminalTabId ?: "")
+            }
             throw cancelled
         } catch (error: Exception) {
             return CommandResult(-1, error.message ?: error::class.simpleName.orEmpty())

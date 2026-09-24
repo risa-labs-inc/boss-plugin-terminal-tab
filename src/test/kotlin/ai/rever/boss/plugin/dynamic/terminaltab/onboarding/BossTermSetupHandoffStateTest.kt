@@ -56,7 +56,13 @@ class BossTermSetupHandoffStateTest {
                     BossTermSetupController.sendSetupTerminalInput(
                         request.terminalId,
                         request.requestId,
-                        "touch '${fix.absolutePath}'; sleep 60\r".toByteArray(),
+                        // One process makes the marker (a builtin redirect, no child) and then
+                        // becomes the foreground sleep, so once the marker exists a Ctrl-C always
+                        // kills whatever holds the terminal. With `touch ...; sleep 60` the resume
+                        // Ctrl-C could land on an exiting touch; the shell (and bash's "the child
+                        // handled SIGINT" rule) then started sleep, the boundary probe was typed
+                        // into it, and the test timed out about one run in five.
+                        "sh -c ': > \"\$1\"; exec sleep 60' _ '${fix.absolutePath}'\r".toByteArray(),
                     ),
                 )
                 resume.await()

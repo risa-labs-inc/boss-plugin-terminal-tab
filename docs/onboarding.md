@@ -4,7 +4,7 @@
 
 Terminal Tab owns the BOSS setup UI, task planning, verification, retry state, and setup terminal. It uses the released BOSS Term `1.2.155` terminal APIs and integrates with the released Fluck Agent `1.0.110`; it does not depend on unreleased onboarding code from either project.
 
-BossConsole is the window owner. Help, Toolbox, first-run, and terminal-menu requests all route to one window-scoped host composition. Hiding or backgrounding the setup window keeps that composition and its `TabbedTerminal` mounted. This is required because BOSS Term `1.2.155` closes the PTY when its renderer unmounts. The status-bar item brings the same session back to the foreground.
+BossConsole is the window owner. Help, Toolbox, first-run, and terminal-menu requests all route to one window-scoped host composition. That host handler first shipped in BossConsole `9.5.20`, so the manifest's `minBossVersion` is `9.5.20`: an older host would install this plugin and then show no setup at all, since the plugin no longer renders its own wizard. Hiding or backgrounding the setup window keeps that composition and its `TabbedTerminal` mounted. This is required because BOSS Term `1.2.155` closes the PTY when its renderer unmounts. The status-bar item brings the same session back to the foreground.
 
 The setup controller creates a dedicated terminal tab and waits for a command-execution readiness marker before sending installation commands. **Debug with Fluck** sends that terminal ID, a request ID, the owning window ID, the active task, and recent terminal output through a validated BossConsole compatibility bridge. BossConsole opens the Fluck panel only after accepting the request. The setup window then backgrounds while its terminal remains alive.
 

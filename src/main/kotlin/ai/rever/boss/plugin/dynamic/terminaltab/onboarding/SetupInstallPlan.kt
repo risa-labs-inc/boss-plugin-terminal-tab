@@ -246,11 +246,15 @@ private fun buildInstallCommandInternal(
                     if (installed.starship) {
                         userCommands.add(uninstallStarship)
                     }
+                    // Setup scripts run under bash, so this is plain bash: Prezto's documented zsh
+                    // loop (`^README.md(.N)`, `${rcfile:t}`) is a bash syntax error that failed
+                    // the whole step. Same effect: link every runcom except README.md.
                     userCommands.add(
                         "git clone --recursive https://github.com/sorin-ionescu/prezto.git \"\${ZDOTDIR:-\$HOME}/.zprezto\" && " +
-                        "setopt EXTENDED_GLOB 2>/dev/null; " +
-                        "for rcfile in \"\${ZDOTDIR:-\$HOME}\"/.zprezto/runcoms/^README.md(.N); do " +
-                        "  ln -sf \"\$rcfile\" \"\${ZDOTDIR:-\$HOME}/.\${rcfile:t}\" 2>/dev/null; " +
+                        "for rcfile in \"\${ZDOTDIR:-\$HOME}\"/.zprezto/runcoms/*; do " +
+                        "  rcname=\"\$(basename \"\$rcfile\")\"; " +
+                        "  [ -f \"\$rcfile\" ] && [ \"\$rcname\" != README.md ] || continue; " +
+                        "  ln -sf \"\$rcfile\" \"\${ZDOTDIR:-\$HOME}/.\$rcname\" 2>/dev/null; " +
                         "done && echo '✓ Prezto installed'"
                     )
                 }
