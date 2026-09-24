@@ -266,6 +266,11 @@ val pinnedLocalApiJar = provider {
 // command palette, workflows, history search, session restore; compose-ui
 // compiles with -Xjvm-default=all (no $DefaultImpls bridges). 1.1.101 added
 // the `bossterm.settings.dir` relocation hook this plugin relies on.
+// On a bump, re-check that onLastTabClosed still fires only from
+// TabController.closeTab/extractTab (never disposeAll): TerminalTabComponent
+// closes the host tab from it. Also re-check that SettingsManager still saves
+// synchronously to settings.json under bossterm.settings.dir:
+// applyCollapsedTabStripDefault reads it back right after updateSetting.
 val bosstermVersion = "1.2.166"
 
 repositories {

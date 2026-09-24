@@ -94,6 +94,17 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         // in bossterm-compose's SettingsManager.
         relocateBossTermSettings()
 
+        // Keep the tab strip visible when the vertical sidebar is collapsed.
+        // Only against the relocated store: without it SettingsManager would be
+        // standalone BossTerm's ~/.bossterm, which is not ours to change.
+        try {
+            System.getProperty("bossterm.settings.dir")?.takeIf { it.isNotBlank() }?.let {
+                applyCollapsedTabStripDefault(java.io.File(it), SettingsManager.instance)
+            }
+        } catch (t: Throwable) {
+            mcpLogger.warn(LogCategory.TERMINAL, "Failed to apply collapsed tab strip default", error = t)
+        }
+
         // Must run before any terminal tab (and thus any pty4j spawn) is created.
         neutralizeStalePty4jNativeFolder()
 
