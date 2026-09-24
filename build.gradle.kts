@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.zip.ZipFile
 
 plugins {
     kotlin("jvm") version "2.3.0"
@@ -149,10 +150,10 @@ kotlin {
 // Auto-detect CI environment
 val useLocalDependencies = System.getenv("CI") != "true"
 val bossPluginApiPath = "../boss-plugin-api"
-// 1.0.88 is required by renameTab, tabActivityFlow, and initialCommand split overloads.
-// Compile against the minimum supported API so newer symbols cannot silently
-// bypass the gate. Keep both workflow pins aligned with this version.
-val bossPluginApiVersion = "1.0.88"
+// Setup progress registration and host-owned onboarding require 1.0.89.
+// Compile against the declared minimum so newer symbols cannot silently bypass
+// the compatibility gate. Keep both workflow pins aligned with this version.
+val bossPluginApiVersion = "1.0.89"
 
 /**
  * The api jar this plugin compiles against locally: exactly [bossPluginApiVersion], the
@@ -343,10 +344,15 @@ dependencies {
     // composable. Test-scoped only, so it stays out of the plugin JAR (which is
     // built from runtimeClasspath).
     testImplementation(compose.runtime)
+    testImplementation(compose.foundation)
     // ui-graphics for androidx.compose.ui.graphics.Color: the theme-bridge test
     // constructs host colors, and a transitive dep of an `implementation` dep is
     // not on the test COMPILE classpath even though it is on the runtime one.
     testImplementation(compose.ui)
+    @OptIn(org.jetbrains.compose.ExperimentalComposeLibrary::class)
+    testImplementation(compose.uiTest)
+    // The host supplies Skiko in production; standalone UI tests need the current OS native runtime.
+    testRuntimeOnly(compose.desktop.currentOs)
     if (useLocalDependencies) {
         testImplementation(files(pinnedLocalApiJar))
     } else {
@@ -362,6 +368,22 @@ tasks.withType<Test>().configureEach {
     systemProperty("pluginVersion", version.toString())
     systemProperty("bossPluginApiVersion", bossPluginApiVersion)
     systemProperty("pluginProjectDir", projectDir.absolutePath)
+    val bossTermTestSettingsDir = layout.buildDirectory.dir("test-bossterm-settings").get().asFile
+    systemProperty("bossterm.settings.dir", bossTermTestSettingsDir.absolutePath)
+    doFirst {
+        bossTermTestSettingsDir.deleteRecursively()
+        check(bossTermTestSettingsDir.mkdirs()) {
+            "Could not create isolated BossTerm test settings directory"
+        }
+    }
+}
+
+// Keep the diagnostic thin JAR from replacing the installable plugin artifact.
+tasks.jar {
+    archiveClassifier.set("thin")
+    // The shared release workflow uploads build/libs/*.jar. Keep diagnostics out
+    // of that directory so the store can only select the installable artifact.
+    destinationDirectory.set(layout.buildDirectory.dir("diagnostic-libs"))
 }
 
 // Task to build plugin JAR with compiled classes + bossterm-compose bundled.
@@ -433,6 +455,22 @@ tasks.register<Jar>("buildPluginJar") {
                 jar.path.replace('\\', '/').contains("/com.google.zxing/")
         }.map { zipTree(it) }
     })
+
+    doLast {
+        val pluginJar = archiveFile.get().asFile
+        val requiredEntries = listOf(
+            "ai/rever/bossterm/compose/EmbeddableTerminalKt.class",
+            "ai/rever/bossterm/compose/TabbedTerminalKt.class",
+            "com/pty4j/PtyProcess.class",
+            "com/sun/jna/Native.class",
+        )
+        ZipFile(pluginJar).use { zip ->
+            val missing = requiredEntries.filter { zip.getEntry(it) == null }
+            check(missing.isEmpty()) {
+                "Installable Terminal Tab JAR is missing bundled runtime entries: ${missing.joinToString()}"
+            }
+        }
+    }
 }
 
 // Sync version from build.gradle.kts into plugin.json (single source of truth).
