@@ -183,7 +183,11 @@ class TerminalTabComponent(
             terminalId = config.id,
             initialCommand = initialCommand,
             workingDirectory = workingDirectory,
-            onExit = { },
+            // BossTerm fires this when the LAST inner tab goes away (closed,
+            // shell exited, or dragged out) - never on dispose/reset, which use
+            // disposeAll(). An empty terminal has nothing to show, so close the
+            // host tab the way standalone BossTerm closes its window.
+            onExit = { tabUpdateProvider?.closeTab() },
             onShowSettings = {
                 val windowId = context.windowId
                 if (windowId != null) {
