@@ -123,8 +123,10 @@ class SidebarEnvInjectionTest {
     @Test
     fun `the posix wrapper carries the file path and never a value`() {
         val file = File("/home/user/.boss/run/env/1/env-123.sh")
+        // file.path, not the literal: on Windows the JVM renders this path with backslashes.
+        val path = file.path
         val wrapped = SidebarEnvInjection.wrapCommand("curl -H \"Authorization: Bearer \$TOKEN\" https://x", file, windows = false)
-        assertTrue(wrapped.contains(". '/home/user/.boss/run/env/1/env-123.sh' && rm -f '/home/user/.boss/run/env/1/env-123.sh' && eval "), wrapped)
+        assertTrue(wrapped.contains(". '$path' && rm -f '$path' && eval "), wrapped)
         assertTrue(wrapped.endsWith("eval 'curl -H \"Authorization: Bearer \$TOKEN\" https://x'"), wrapped)
     }
 
@@ -154,13 +156,21 @@ class SidebarEnvInjectionTest {
         val dir = tempDir()
         val file = SidebarEnvInjection.writeEnvFile(mapOf("TOKEN" to hostile, "EMPTY" to ""), dir, windows = true)
         // Restricted blocks running any .ps1, which is what broke dot-sourcing the old script.
-        val wrapped = SidebarEnvInjection.wrapCommand("Write-Output (\"[\" + \$env:TOKEN + \"]\")", file, windows = true)
+        // The value comes back as base64 of its UTF-8 bytes: Windows PowerShell 5.1 writes the
+        // console in the OEM code page, which would mangle the curly quotes on the way out even
+        // when the variable itself is exact. ASCII out, byte-exact comparison here.
+        val wrapped = SidebarEnvInjection.wrapCommand(
+            "Write-Output ('B64=' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(\$env:TOKEN)))",
+            file,
+            windows = true,
+        )
 
         val (exit, output) = run(exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Restricted", "-Command", wrapped)
 
-        assertEquals(0, exit, output)
-        assertEquals("[$hostile]", output.trim(), "the value was altered or executed")
-        assertFalse("PWNED" in output.replace("\$(Write-Output PWNED)", ""), "part of the value ran as code: $output")
+        assertEquals(0, exit, "a `; exit 3` in the value must not run: $output")
+        assertFalse("PWNED" in output, "part of the value ran as code: $output")
+        val encoded = assertNotNull(Regex("B64=([A-Za-z0-9+/=]*)").find(output), output).groupValues[1]
+        assertEquals(hostile, String(Base64.getDecoder().decode(encoded), Charsets.UTF_8), "the value was altered: $output")
         assertFalse(file.exists(), "the file is removed")
     }
 

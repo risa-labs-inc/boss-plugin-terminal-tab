@@ -361,6 +361,9 @@ dependencies {
 }
 
 tasks.withType<Test>().configureEach {
+    // CI logs show only "AssertionFailedError at File.kt:NN" by default; print the message, so a
+    // failure on a runner nobody can reproduce locally (the Windows job) is diagnosable.
+    testLogging { exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL }
     useJUnitPlatform()
     inputs.files(".github/workflows/build.yml", ".github/workflows/test.yml")
         .withPropertyName("apiPinWorkflows")
