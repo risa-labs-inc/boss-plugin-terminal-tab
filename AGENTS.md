@@ -81,7 +81,7 @@ command and the variable NAMES; never a value.
 
 - POSIX shells (bash, zsh, fish): `. '<file>' && rm -f '<file>' && eval '<command>'`. `eval` keeps a
   compound command (`a; b`) wholly behind the `&&`.
-- Windows PowerShell: the file is data (`NAME=<base64 of the value>`), read with `Get-Content`, not
+- Windows PowerShell: the file is data (`NAME=<base64 of the value>`), read with plain .NET calls (`[IO.File]::ReadAllLines`, `[Environment]::SetEnvironmentVariable`), not
   a dot-sourced script. So the execution policy cannot block it (`Restricted` is the default on
   Windows client editions), and no value is ever parsed, so no quote character, including the
   curly quotes PowerShell also treats as quotes, can break out. The command runs only when loading

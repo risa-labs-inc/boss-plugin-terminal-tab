@@ -154,7 +154,8 @@ internal object SidebarEnvInjection {
      *
      * Windows PowerShell: the file is data, not a script (see [powershellData]), so the execution
      * policy cannot block it and no value reaches the parser; the command runs only when loading
-     * set `$__bossEnvOk`. Windows PowerShell 5.1 has no `&&`, hence the flag.
+     * set `$__bossEnvOk`. Windows PowerShell 5.1 has no `&&`, hence the flag. An empty value
+     * unsets the variable there, as Windows cannot hold an empty environment variable.
      */
     fun wrapCommand(
         command: String,
@@ -163,13 +164,17 @@ internal object SidebarEnvInjection {
     ): String =
         if (windows) {
             val path = quotePowershell(file.path)
+            // Plain .NET calls, not the Env: and FileSystem providers: they behave the same in
+            // Windows PowerShell 5.1 and PowerShell 7, and every failure throws, so it reaches the
+            // catch. The catch names only the exception type: a message could quote a value.
             "\$__bossEnvOk = \$false; try { " +
-                "Get-Content -LiteralPath $path -ErrorAction Stop | ForEach-Object { " +
-                "\$__bossPair = \$_ -split '=', 2; " +
-                "Set-Item -LiteralPath (\"env:\" + \$__bossPair[0]) -Value " +
-                "([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(\$__bossPair[1]))) }; " +
-                "Remove-Item -LiteralPath $path -Force -ErrorAction Stop; \$__bossEnvOk = \$true " +
-                "} catch { Write-Host ${quotePowershell(MISSING_ENV_MESSAGE)} -ForegroundColor Red }; " +
+                "foreach (\$__bossLine in [IO.File]::ReadAllLines($path)) { " +
+                "if (\$__bossLine.Length -eq 0) { continue }; " +
+                "\$__bossPair = \$__bossLine.Split([char]'=', 2); " +
+                "[Environment]::SetEnvironmentVariable(\$__bossPair[0], " +
+                "[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(\$__bossPair[1])), 'Process') }; " +
+                "[IO.File]::Delete($path); \$__bossEnvOk = \$true " +
+                "} catch { Write-Host (${quotePowershell("$MISSING_ENV_MESSAGE (")} + \$_.Exception.GetType().Name + ')') -ForegroundColor Red }; " +
                 "if (\$__bossEnvOk) { $command }"
         } else {
             val path = quotePosix(file.path)

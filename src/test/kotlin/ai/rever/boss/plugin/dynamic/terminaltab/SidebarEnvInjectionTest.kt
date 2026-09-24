@@ -140,7 +140,7 @@ class SidebarEnvInjectionTest {
         val file = File("C:\\Users\\me\\.boss\\run\\env\\1\\env-1.env")
         val wrapped = SidebarEnvInjection.wrapCommand("dir", file, windows = true)
         assertFalse(wrapped.contains(". '"), "the file must never be dot-sourced as a script: $wrapped")
-        assertTrue(wrapped.contains("Get-Content -LiteralPath 'C:\\Users\\me\\.boss\\run\\env\\1\\env-1.env'"), wrapped)
+        assertTrue(wrapped.contains("[IO.File]::ReadAllLines('${file.path}')"), wrapped)
         assertTrue(wrapped.endsWith("if (\$__bossEnvOk) { dir }"), wrapped)
     }
 
