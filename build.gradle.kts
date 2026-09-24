@@ -130,7 +130,9 @@ group = "ai.rever.boss.plugin.dynamic"
 // (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.165.md).
 // 2.5.96: auto-bumped bundled BossTerm to 1.2.166
 // (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.166.md).
-version = "2.5.98"
+// 2.5.99: auto-bumped bundled BossTerm to 1.2.167
+// (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.167.md).
+version = "2.5.99"
 
 java {
     toolchain {
@@ -194,6 +196,7 @@ val pinnedLocalApiJar = provider {
 
 // BossTerm version is now private to this plugin. Bumping bossterm only
 // requires re-releasing this plugin, not BossConsole.
+// 1.2.167: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.167.md).
 // 1.2.166: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.166.md).
 // 1.2.165: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.165.md).
 // 1.2.164: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.164.md).
@@ -271,7 +274,7 @@ val pinnedLocalApiJar = provider {
 // closes the host tab from it. Also re-check that SettingsManager still saves
 // synchronously to settings.json under bossterm.settings.dir:
 // applyCollapsedTabStripDefault reads it back right after updateSetting.
-val bosstermVersion = "1.2.166"
+val bosstermVersion = "1.2.167"
 
 repositories {
     google()
