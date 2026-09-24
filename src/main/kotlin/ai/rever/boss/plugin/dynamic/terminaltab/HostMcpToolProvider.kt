@@ -4,6 +4,8 @@ import ai.rever.boss.plugin.api.McpToolDefinition
 import ai.rever.boss.plugin.api.McpToolHandler
 import ai.rever.boss.plugin.api.McpToolProvider
 import ai.rever.boss.plugin.api.McpToolResult
+import ai.rever.boss.plugin.logging.BossLogger
+import ai.rever.boss.plugin.logging.LogCategory
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import io.modelcontextprotocol.kotlin.sdk.types.ToolSchema
@@ -50,15 +52,28 @@ internal class HostMcpToolProvider(
 
         private val json = Json { ignoreUnknownKeys = true }
 
-        /** The registry hands a raw JSON string; the handlers take the object it decodes to. */
-        internal fun argumentsObject(raw: String): JsonObject =
-            try {
-                json.parseToJsonElement(raw) as? JsonObject ?: JsonObject(emptyMap())
-            } catch (_: IllegalArgumentException) {
-                JsonObject(emptyMap())
-            } catch (_: kotlinx.serialization.SerializationException) {
-                JsonObject(emptyMap())
+        private val logger = BossLogger.forComponent("TerminalTabHostMcpToolProvider")
+
+        /**
+         * The registry hands a raw JSON string; the handlers take the object it decodes to. Anything
+         * else becomes `{}`, which the handler then refuses by name ("Missing required argument"),
+         * and a debug line records it so host/plugin schema drift is diagnosable. The raw text is
+         * never logged: it can hold resolved secret values.
+         */
+        internal fun argumentsObject(raw: String): JsonObject {
+            val parsed =
+                try {
+                    json.parseToJsonElement(raw) as? JsonObject
+                } catch (_: IllegalArgumentException) {
+                    null
+                } catch (_: kotlinx.serialization.SerializationException) {
+                    null
+                }
+            if (parsed == null) {
+                logger.debug(LogCategory.TERMINAL, "Registry arguments were not a JSON object; using {}", mapOf("length" to raw.length))
             }
+            return parsed ?: JsonObject(emptyMap())
+        }
     }
 }
 

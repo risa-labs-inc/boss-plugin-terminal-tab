@@ -1,6 +1,7 @@
 package ai.rever.boss.plugin.dynamic.terminaltab
 
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
+import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -13,40 +14,52 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
  * An env file holds `run_in_sidebar`'s values - resolved secrets included - in plaintext until a
- * shell sources and removes it. These pin that no path leaves one behind: a start that fails, a
- * start that queues nothing, and a command that never runs.
+ * shell loads and removes it. These pin that no path leaves one behind (a start that fails, a
+ * start that queues nothing, a command that never runs, a plugin that stops or crashed), that a
+ * sweep never takes a live other process's pending file, and that the runner entry and the tool
+ * result carry no value.
  */
 class SidebarEnvCleanupTest {
-    private val dir: File = Files.createTempDirectory("sidebar-env").toFile()
-    private val productionDir = SidebarEnvInjection.envDirProvider
+    private val base: File = Files.createTempDirectory("sidebar-env").toFile()
+    private val productionBase = SidebarEnvInjection.envBaseProvider
     private val productionStarter = sidebarTabStarter
     private val productionWindow = sidebarWindowLookup
+    private val productionRunner = sidebarRunnerRegistrar
     private var startedCommand: String? = null
+    private var runnerCommand: String? = null
+    private val secretValue = "s3cret-value"
 
     @BeforeTest
     fun seams() {
-        SidebarEnvInjection.envDirProvider = { dir }
+        SidebarEnvInjection.envBaseProvider = { base }
         sidebarWindowLookup = { "test-window" }
+        sidebarRunnerRegistrar = { _, _, command, _, _ ->
+            runnerCommand = command
+            true
+        }
     }
 
     @AfterTest
     fun restore() {
-        SidebarEnvInjection.envDirProvider = productionDir
+        SidebarEnvInjection.envBaseProvider = productionBase
         sidebarTabStarter = productionStarter
         sidebarWindowLookup = productionWindow
-        dir.deleteRecursively()
+        sidebarRunnerRegistrar = productionRunner
+        base.deleteRecursively()
     }
 
-    private fun envFiles(): List<File> = dir.listFiles()?.filter { it.name.startsWith("env-") }.orEmpty()
+    private fun envFiles(): List<File> =
+        base.walkTopDown().filter { it.isFile && it.name.startsWith("env-") }.toList()
 
     private fun runInSidebar(): CallToolResult = runBlocking {
         val args: JsonObject = buildJsonObject {
             put("command", "echo \"\$TOKEN\"")
-            putJsonObject("env") { put("TOKEN", "s3cret") }
+            putJsonObject("env") { put("TOKEN", secretValue) }
         }
         bossHostMcpToolDefs.single { it.name == "run_in_sidebar" }.handler(args)
     }
@@ -61,7 +74,7 @@ class SidebarEnvCleanupTest {
         val result = runInSidebar()
 
         assertEquals(true, result.isError)
-        assertTrue(startedCommand.orEmpty().contains(dir.path), "the command should have sourced a file in $dir")
+        assertTrue(startedCommand.orEmpty().contains(SidebarEnvInjection.envDir().path), "the command should have loaded a file")
         assertEquals(emptyList(), envFiles(), "a failed start must not leave the values on disk")
     }
 
@@ -74,7 +87,7 @@ class SidebarEnvCleanupTest {
 
         runInSidebar()
 
-        assertEquals(emptyList(), envFiles(), "nothing will source the file, so it must go")
+        assertEquals(emptyList(), envFiles(), "nothing will load the file, so it must go")
     }
 
     @Test
@@ -87,12 +100,32 @@ class SidebarEnvCleanupTest {
         runInSidebar()
 
         val files = envFiles()
-        assertEquals(1, files.size, "the shell still has to source it: $files")
+        assertEquals(1, files.size, "the shell still has to load it: $files")
+        assertEquals(SidebarEnvInjection.envDir(), files.single().parentFile, "files live in this process's directory")
         assertTrue(startedCommand.orEmpty().contains(files.single().path))
     }
 
     @Test
+    fun `the runner entry fails closed on re-run and neither it nor the result holds a value`() {
+        sidebarTabStarter = { _, _, _, _, _ -> true }
+
+        val result = runInSidebar()
+
+        val entry = assertNotNull(runnerCommand)
+        // The wrapped command: its file is gone after the first run, so a runner re-run prints why
+        // and does not run, rather than running the command without its variables.
+        assertEquals(startedCommand ?: entry, entry)
+        assertTrue(entry.contains(SidebarEnvInjection.envDir().path), entry)
+        assertFalse(entry.contains(secretValue), "the runner entry must never hold a value: $entry")
+        val text = result.content.filterIsInstance<TextContent>().joinToString { it.text }
+        assertFalse(text.contains(secretValue), "the result must never hold a value: $text")
+        assertFalse(text.contains(SidebarEnvInjection.envDir().path), "the result carries the caller's command, not the env path: $text")
+        assertTrue(text.contains("TOKEN"), "the result names the variables: $text")
+    }
+
+    @Test
     fun `a sweep removes stale env files and nothing else`() {
+        val dir = File(base, "1")
         val now = System.currentTimeMillis()
         // Stale one written last: writing a file sweeps older stale ones itself (next test).
         val fresh = SidebarEnvInjection.writeEnvFile(mapOf("B" to "2"), dir)
@@ -112,6 +145,7 @@ class SidebarEnvCleanupTest {
 
     @Test
     fun `writing an env file sweeps one left by a command that never ran`() {
+        val dir = File(base, "1")
         val swallowed = SidebarEnvInjection.writeEnvFile(mapOf("A" to "1"), dir)
             .apply { setLastModified(System.currentTimeMillis() - SidebarEnvInjection.STALE_AFTER_MS - 1_000) }
 
@@ -119,5 +153,24 @@ class SidebarEnvCleanupTest {
 
         assertFalse(swallowed.exists(), "a stale file must not outlive the next write")
         assertTrue(next.exists())
+    }
+
+    @Test
+    fun `the lifecycle sweep takes this and dead processes' files but not a live one's`() {
+        val self = 100L
+        val liveOther = 200L
+        val dead = 300L
+        val own = SidebarEnvInjection.writeEnvFile(mapOf("A" to "1"), File(base, "$self"))
+        val pendingElsewhere = SidebarEnvInjection.writeEnvFile(mapOf("B" to "2"), File(base, "$liveOther"))
+        val crashed = SidebarEnvInjection.writeEnvFile(mapOf("C" to "3"), File(base, "$dead"))
+        val legacyFlat = File(base, "env-legacy.sh").apply { writeText("export D='4'\n") }
+
+        val removed = SidebarEnvInjection.sweepForLifecycle(base, selfPid = self, isAlive = { it == liveOther })
+
+        assertEquals(3, removed)
+        assertFalse(own.exists(), "this process's terminals are gone at start and stop")
+        assertFalse(crashed.exists(), "a dead process never ran its stop sweep")
+        assertFalse(legacyFlat.exists(), "files from the earlier flat layout go too")
+        assertTrue(pendingElsewhere.exists(), "another live BOSS process's shell may still need its file")
     }
 }

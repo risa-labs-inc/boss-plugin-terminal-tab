@@ -74,18 +74,35 @@ its own policy and never reaches the registry.
 ### `run_in_sidebar` takes an `env` object
 
 Environment variables for the command, as NAME to value. The values never go on the command line:
-`SidebarEnvInjection` writes them to an owner-only file under `~/.boss/run/env/` (permissions set
-at creation on POSIX), and the shell runs `. '<file>' && rm -f '<file>' && <command>` (a
-PowerShell equivalent on Windows, untested). The scrollback, the runner entry and the tool's
-result carry the path and the variable NAMES, never a value. A value may be a `{{secret:<id>}}`
-reference, which the host resolves after the operator approves; that is how a credential reaches
-a shell command without the agent ever holding it.
+`SidebarEnvInjection` writes them to an owner-only file under `~/.boss/run/env/<pid>/` (the file
+0600 from creation, the directories 0700), the shell loads and deletes it, and only then runs the
+command. The scrollback and the runner entry carry the file's path, the tool's result the caller's
+command and the variable NAMES; never a value.
+
+- POSIX shells (bash, zsh, fish): `. '<file>' && rm -f '<file>' && eval '<command>'`. `eval` keeps a
+  compound command (`a; b`) wholly behind the `&&`.
+- Windows PowerShell: the file is data (`NAME=<base64 of the value>`), read with `Get-Content`, not
+  a dot-sourced script. So the execution policy cannot block it (`Restricted` is the default on
+  Windows client editions), and no value is ever parsed, so no quote character, including the
+  curly quotes PowerShell also treats as quotes, can break out. The command runs only when loading
+  succeeded (`if ($__bossEnvOk) { ... }`; Windows PowerShell 5.1 has no `&&`).
+
+Either way, a command whose file cannot be loaded prints why and does not run. That covers a re-run
+from the top-bar runner, whose entry holds the wrapped command and whose file is gone after the
+first run: run it again through the agent.
+
+A value may be a `{{secret:<id>}}` reference, which the host resolves after the operator approves;
+that is how a credential reaches a shell command without the agent ever holding it. That needs a
+BossConsole with #822 (merged after 9.5.23); on an older host the literal `{{secret:<id>}}` string
+reaches the shell.
 
 No path leaves a file behind: it is deleted when the sidebar start throws or queues nothing, each
-new write removes env files older than 10 minutes (a command swallowed by a busy terminal), and
-plugin start and stop remove them all, since only this plugin instance's terminals can source one.
-A command that runs after its file was removed finds no file, and `&&` keeps it from running
-without its variables.
+new write removes this process's env files older than 10 minutes (a command swallowed by a busy
+terminal), and plugin start and stop remove this process's files and those of any process that is
+no longer running. A live other BOSS process sharing the data root (a second launch, a restart
+while the old JVM exits) keeps its own directory, so a sweep never takes a file its shell still
+needs. `SidebarEnvInjectionTest` runs the wrapper under every shell present, PowerShell included
+under the `Restricted` policy (Windows PowerShell 5.1 on the Windows CI job, pwsh on Linux).
 
 Not a secure enclave: the shell and every process it starts have the value, and `printenv`
 prints it. The clean long-term shape is an `environment` parameter on BossTerm's tab creation,

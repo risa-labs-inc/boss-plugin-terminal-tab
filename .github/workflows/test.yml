@@ -58,8 +58,10 @@ jobs:
 
       # Exercise generated scripts with actual Windows PowerShell 5.1. These
       # fixtures only run harmless commands; they never install packages.
+      # SidebarEnvInjectionTest runs run_in_sidebar's env wrapper under the
+      # Restricted execution policy, the default on Windows client editions.
       - name: Verify Windows scripts
         if: runner.os == 'Windows'
-        run: ./gradlew test --tests '*OnboardingInstallScriptTest' --tests '*PluginManifestTest' buildPluginJar --no-daemon
+        run: ./gradlew test --tests '*OnboardingInstallScriptTest' --tests '*PluginManifestTest' --tests '*SidebarEnvInjectionTest' buildPluginJar --no-daemon
         env:
           CI: 'true'

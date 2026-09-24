@@ -312,6 +312,7 @@ private fun runInSidebarSchema(): ToolSchema =
     )
 
 /** Test seam over [TabbedTerminalStateRegistry.newSidebarTab], which needs a live window. */
+@Volatile
 internal var sidebarTabStarter: (windowId: String, command: String, workingDir: String?, configId: String, isRerun: Boolean) -> Boolean =
     { windowId, command, workingDir, configId, isRerun ->
         TabbedTerminalStateRegistry.newSidebarTab(
@@ -323,7 +324,15 @@ internal var sidebarTabStarter: (windowId: String, command: String, workingDir: 
         )
     }
 
+/** Test seam over [registerSidebarRunWithRunner], which reaches the host runner by reflection. */
+@Volatile
+internal var sidebarRunnerRegistrar: (windowId: String, configId: String, command: String, workingDir: String?, name: String) -> Boolean =
+    { windowId, configId, command, workingDir, name ->
+        registerSidebarRunWithRunner(windowId = windowId, configId = configId, command = command, workingDir = workingDir, name = name)
+    }
+
 /** Test seam over the host's focused-window lookup. */
+@Volatile
 internal var sidebarWindowLookup: () -> String? = ::focusedWindowId
 
 private suspend fun runInSidebar(args: JsonObject): CallToolResult {
@@ -349,8 +358,9 @@ private suspend fun runInSidebar(args: JsonObject): CallToolResult {
         ?: return errorResult("No focused BossConsole window; focus a window and retry.")
 
     // The command the SHELL runs. With env, the values go to an owner-only file that the shell
-    // sources and removes; the command line, the runner entry and the result below carry the
-    // path, never a value (see SidebarEnvInjection).
+    // loads and removes before running the command (see SidebarEnvInjection). The command line
+    // and the runner entry carry that wrapped command (a path, never a value); the result below
+    // carries the caller's own command and the variable names.
     var envFile: java.io.File? = null
     val shellCommand =
         if (env.isEmpty()) {
@@ -387,13 +397,10 @@ private suspend fun runInSidebar(args: JsonObject): CallToolResult {
     // Register the run with the host runner so the top-bar runner reflects it
     // (selects the config + shows running/Stop). Best-effort; the command still
     // runs even if the host class isn't reachable.
-    val runnerUpdated = registerSidebarRunWithRunner(
-        windowId = windowId,
-        configId = configId,
-        command = command,
-        workingDir = workingDir,
-        name = runName
-    )
+    // The runner entry gets the wrapped command, not the bare one. Its env file is gone after the
+    // first run, so a re-run from the top-bar runner prints why and does not run, instead of
+    // silently running the command without its variables. Values are never in it.
+    val runnerUpdated = sidebarRunnerRegistrar(windowId, configId, shellCommand, workingDir, runName)
 
     return jsonResult(isError = false) {
         put("ok", started)

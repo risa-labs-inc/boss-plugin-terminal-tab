@@ -115,9 +115,10 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         // Must run before any terminal tab (and thus any pty4j spawn) is created.
         neutralizeStalePty4jNativeFolder()
 
-        // run_in_sidebar env files hold values in plaintext until a shell sources them. None can
-        // still be pending now: every terminal that could source one belonged to an earlier
-        // instance of this plugin, and died with it.
+        // run_in_sidebar env files hold values in plaintext until a shell loads them. None of this
+        // process's can still be pending now: every terminal that could load one belonged to an
+        // earlier instance of this plugin and died with it. Dead processes' files go too; a live
+        // other BOSS process's are left alone (see SidebarEnvInjection.sweepForLifecycle).
         sweepSidebarEnvFiles("start")
 
         pluginContext = context
@@ -430,7 +431,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
 
     private fun sweepSidebarEnvFiles(phase: String) {
         try {
-            val removed = SidebarEnvInjection.sweep(SidebarEnvInjection.envDir(), olderThanMs = null)
+            val removed = SidebarEnvInjection.sweepForLifecycle()
             if (removed > 0) {
                 mcpLogger.info(LogCategory.TERMINAL, "Removed unconsumed run_in_sidebar env files", mapOf("phase" to phase, "count" to removed))
             }
