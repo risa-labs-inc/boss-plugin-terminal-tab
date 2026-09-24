@@ -117,6 +117,43 @@ internal fun installDynamicPluginTools(
     dynLogger.info(LogCategory.TERMINAL, "Dynamic plugin MCP tool bridge installed")
 }
 
+/**
+ * Everything this plugin adds to the `boss` MCP server beyond BossTerm's built-ins.
+ *
+ * - Host tools through the registry ([HostMcpToolProvider] took): the bridge carries
+ *   `run_in_sidebar` and `cli` like any other registry tool, and the setup-terminal tools still go
+ *   straight onto the server (see [serverRegisteredHostTools]), so their names stay reserved with
+ *   BossTerm's own and no registry tool can shadow them.
+ * - A registry, but the provider did not take: every host tool on the server, plus the bridge.
+ * - No registry (an old host): every host tool on the server, and no plugin-contributed tools.
+ */
+internal fun installBossServerTools(
+    server: Server,
+    toolRegistry: McpToolRegistry?,
+    hostToolsViaRegistry: Boolean,
+    scope: CoroutineScope,
+) {
+    when {
+        hostToolsViaRegistry && toolRegistry != null -> {
+            registerHostToolsOnServer(server, viaRegistry = true)
+            installDynamicPluginTools(
+                server,
+                toolRegistry,
+                scope,
+                reserved = bossTermOwnToolNames + setupTerminalMcpToolDefs.map { it.name },
+            )
+        }
+        toolRegistry != null -> {
+            registerHostToolsOnServer(server, viaRegistry = false)
+            installDynamicPluginTools(server, toolRegistry, scope)
+        }
+        else -> {
+            registerHostToolsOnServer(server, viaRegistry = false)
+            dynLogger.warn(LogCategory.TERMINAL, "mcpToolRegistry unavailable; plugin-contributed MCP tools disabled")
+        }
+    }
+}
+
 /** Re-arm the bridge; called at plugin (re-)registration before the MCP manager starts. */
 internal fun resumeDynamicPluginTools() {
     bridgeDisposed = false

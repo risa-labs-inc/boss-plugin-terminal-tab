@@ -34,6 +34,24 @@ internal object SidebarEnvInjection {
     /** POSIX environment variable names. A key that is not one is refused before anything is written. */
     private val nameRule = Regex("[A-Za-z_][A-Za-z0-9_]*")
 
+    /** Every env file this object writes starts with this, so a sweep touches nothing else. */
+    private const val FILE_PREFIX = "env-"
+
+    /**
+     * How long an unconsumed env file may live. The shell normally sources and removes it within
+     * milliseconds, or seconds when the sidebar panel is still opening. A file older than this
+     * belongs to a command that never ran (typed into a busy terminal and swallowed, say), and it
+     * holds the values in plaintext, so it goes. A command that does run later finds no file,
+     * and `&&` keeps it from running without its variables.
+     */
+    const val STALE_AFTER_MS: Long = 10 * 60 * 1000L
+
+    /** Where `run_in_sidebar` keeps env files. A var so tests never touch the real data root. */
+    @Volatile
+    internal var envDirProvider: () -> File = { bossDataDir("run/env") }
+
+    fun envDir(): File = envDirProvider()
+
     private val ownerOnly: Set<PosixFilePermission> =
         setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)
 
@@ -56,16 +74,31 @@ internal object SidebarEnvInjection {
         windows: Boolean = isWindows,
     ): File {
         Files.createDirectories(dir.toPath())
+        sweep(dir, olderThanMs = STALE_AFTER_MS)
         val suffix = if (windows) ".ps1" else ".sh"
         val posix = dir.toPath().fileSystem.supportedFileAttributeViews().contains("posix")
         val path =
             if (posix) {
-                Files.createTempFile(dir.toPath(), "env-", suffix, PosixFilePermissions.asFileAttribute(ownerOnly))
+                Files.createTempFile(dir.toPath(), FILE_PREFIX, suffix, PosixFilePermissions.asFileAttribute(ownerOnly))
             } else {
-                Files.createTempFile(dir.toPath(), "env-", suffix)
+                Files.createTempFile(dir.toPath(), FILE_PREFIX, suffix)
             }
         Files.writeString(path, if (windows) powershellScript(env) else posixScript(env))
         return path.toFile()
+    }
+
+    /**
+     * Delete env files in [dir]: all of them when [olderThanMs] is null, otherwise those last
+     * modified more than that long ago. Nothing but this object's own files is touched.
+     *
+     * Called with null at plugin start and stop: every terminal that could source a file belongs
+     * to this plugin instance, so at either point no pending command can still need one.
+     *
+     * @return how many files were deleted.
+     */
+    fun sweep(dir: File, olderThanMs: Long?, now: Long = System.currentTimeMillis()): Int {
+        val files = dir.listFiles { f -> f.isFile && f.name.startsWith(FILE_PREFIX) } ?: return 0
+        return files.count { f -> (olderThanMs == null || now - f.lastModified() > olderThanMs) && f.delete() }
     }
 
     /**

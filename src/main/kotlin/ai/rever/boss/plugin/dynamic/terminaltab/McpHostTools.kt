@@ -120,8 +120,22 @@ internal val setupTerminalMcpToolDefs: List<HostMcpTool> = listOf(
  * the tools surface client-side as `mcp__boss__run_in_sidebar` / `mcp__boss__cli`
  * (names in `additionalTools` are NOT prefixed; the server is keyed `boss`).
  */
-internal val bossHostMcpTools: (Server) -> Unit = { server ->
-    for (tool in bossHostMcpToolDefs + setupTerminalMcpToolDefs) {
+internal val bossHostMcpTools: (Server) -> Unit = { server -> registerHostToolsOnServer(server, viaRegistry = false) }
+
+/**
+ * The host tools this plugin puts straight onto the MCP server.
+ *
+ * When [HostMcpToolProvider] carries `run_in_sidebar` and `cli` through the host registry, the
+ * setup-terminal tools still go here. They are reachable only with the exact request token of an
+ * accepted Fluck handoff, so the registry's per-call approval would add a prompt to every
+ * keystroke Fluck sends during setup repair; and the provider does not carry them, so skipping
+ * them here would leave Debug with Fluck with no tools at all.
+ */
+internal fun serverRegisteredHostTools(viaRegistry: Boolean): List<HostMcpTool> =
+    if (viaRegistry) setupTerminalMcpToolDefs else bossHostMcpToolDefs + setupTerminalMcpToolDefs
+
+internal fun registerHostToolsOnServer(server: Server, viaRegistry: Boolean) {
+    for (tool in serverRegisteredHostTools(viaRegistry)) {
         if (tool.name.startsWith("setup_terminal_") && !setupToolEnabled(tool.name)) continue
         server.addTool(
             name = tool.name,
@@ -297,6 +311,21 @@ private fun runInSidebarSchema(): ToolSchema =
         required = listOf("command")
     )
 
+/** Test seam over [TabbedTerminalStateRegistry.newSidebarTab], which needs a live window. */
+internal var sidebarTabStarter: (windowId: String, command: String, workingDir: String?, configId: String, isRerun: Boolean) -> Boolean =
+    { windowId, command, workingDir, configId, isRerun ->
+        TabbedTerminalStateRegistry.newSidebarTab(
+            windowId = windowId,
+            command = command,
+            workingDirectory = workingDir,
+            configId = configId,
+            isRerun = isRerun,
+        )
+    }
+
+/** Test seam over the host's focused-window lookup. */
+internal var sidebarWindowLookup: () -> String? = ::focusedWindowId
+
 private suspend fun runInSidebar(args: JsonObject): CallToolResult {
     val command = args.str("command")
     if (command.isNullOrBlank()) {
@@ -316,37 +345,38 @@ private suspend fun runInSidebar(args: JsonObject): CallToolResult {
         ?: command.trim().lineSequence().firstOrNull()?.take(60)?.ifBlank { null }
         ?: command
 
-    val windowId = focusedWindowId()
+    val windowId = sidebarWindowLookup()
         ?: return errorResult("No focused BossConsole window; focus a window and retry.")
 
     // The command the SHELL runs. With env, the values go to an owner-only file that the shell
     // sources and removes; the command line, the runner entry and the result below carry the
     // path, never a value (see SidebarEnvInjection).
+    var envFile: java.io.File? = null
     val shellCommand =
         if (env.isEmpty()) {
             command
         } else {
             try {
-                val file = SidebarEnvInjection.writeEnvFile(env, bossDataDir("run/env"))
+                val file = SidebarEnvInjection.writeEnvFile(env, SidebarEnvInjection.envDir()).also { envFile = it }
                 SidebarEnvInjection.wrapCommand(command, file)
             } catch (t: Throwable) {
+                envFile?.delete()
                 hostToolsLogger.warn(LogCategory.TERMINAL, "run_in_sidebar: could not write env file", error = t)
                 return errorResult("Failed to prepare environment for the command: ${t.message}")
             }
         }
 
+    // The env file holds the values in plaintext until the shell sources it, so every path on
+    // which no shell will run the command deletes it here rather than leaving it on disk.
     val started = try {
-        TabbedTerminalStateRegistry.newSidebarTab(
-            windowId = windowId,
-            command = shellCommand,
-            workingDirectory = workingDir,
-            configId = configId,
-            isRerun = isRerun
-        )
+        sidebarTabStarter(windowId, shellCommand, workingDir, configId, isRerun)
     } catch (t: Throwable) {
+        envFile?.delete()
         hostToolsLogger.warn(LogCategory.TERMINAL, "run_in_sidebar: newSidebarTab failed", error = t)
         return errorResult("Failed to start sidebar command: ${t.message}")
     }
+    // false: the sidebar terminal is gone, so nothing was queued and nothing will source the file.
+    if (!started) envFile?.delete()
 
     // Ensure the sidebar terminal panel is visible. On a fresh open this also
     // drives the pending-command consumption that actually runs the command

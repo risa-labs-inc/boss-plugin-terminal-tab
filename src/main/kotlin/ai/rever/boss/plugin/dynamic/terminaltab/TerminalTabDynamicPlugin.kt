@@ -115,6 +115,11 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         // Must run before any terminal tab (and thus any pty4j spawn) is created.
         neutralizeStalePty4jNativeFolder()
 
+        // run_in_sidebar env files hold values in plaintext until a shell sources them. None can
+        // still be pending now: every terminal that could source one belonged to an earlier
+        // instance of this plugin, and died with it.
+        sweepSidebarEnvFiles("start")
+
         pluginContext = context
         val setupSupervisor = BossTermFluckSupervisor(context)
         TerminalPluginContextHolder.setupSupervisor = setupSupervisor
@@ -286,20 +291,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
                 // endpoint as the built-in terminal tools (see McpHostTools.kt),
                 // plus the dynamic bridge for plugin-contributed tools.
                 additionalTools = { server ->
-                    if (hostToolsViaRegistry && toolRegistry != null) {
-                        // The bridge below carries run_in_sidebar and cli like any other
-                        // registry tool, so only BossTerm's own names stay reserved.
-                        installDynamicPluginTools(server, toolRegistry, mcpScope, reserved = bossTermOwnToolNames)
-                    } else if (toolRegistry != null) {
-                        bossHostMcpTools(server)
-                        installDynamicPluginTools(server, toolRegistry, mcpScope)
-                    } else {
-                        bossHostMcpTools(server)
-                        mcpLogger.warn(
-                            LogCategory.TERMINAL,
-                            "mcpToolRegistry unavailable; plugin-contributed MCP tools disabled"
-                        )
-                    }
+                    installBossServerTools(server, toolRegistry, hostToolsViaRegistry, mcpScope)
                 }
             )
             TerminalMcpConfigHolder.config = config
@@ -426,12 +418,25 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
 
         // Unregister tab type when plugin is unloaded
         pluginContext?.tabRegistry?.unregisterTabType(TerminalTabType.typeId)
+        // Same reasoning as at start: this instance's terminals go with it.
+        sweepSidebarEnvFiles("stop")
         if (hostToolsViaRegistry) {
             runCatching { pluginContext?.unregisterMcpToolProvider(HostMcpToolProvider.PROVIDER_ID) }
             hostToolsViaRegistry = false
         }
         terminalApi = null
         pluginContext = null
+    }
+
+    private fun sweepSidebarEnvFiles(phase: String) {
+        try {
+            val removed = SidebarEnvInjection.sweep(SidebarEnvInjection.envDir(), olderThanMs = null)
+            if (removed > 0) {
+                mcpLogger.info(LogCategory.TERMINAL, "Removed unconsumed run_in_sidebar env files", mapOf("phase" to phase, "count" to removed))
+            }
+        } catch (t: Throwable) {
+            mcpLogger.warn(LogCategory.TERMINAL, "Could not sweep run_in_sidebar env files", error = t)
+        }
     }
 
     /**

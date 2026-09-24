@@ -57,9 +57,16 @@ kill-switch, RBAC, ALLOW/ASK/DENY with the approval dialog, the operation ledger
 cap, and `{{secret:<id>}}` references resolved by the host after approval (BossConsole#495 is the
 gap this closes for this plugin's own two tools; BossTerm's built-ins are still served by
 BossTerm's own server and are out of scope here). When they are in the registry, the bridge in
-`McpDynamicTools` is told to reserve only `bossTermOwnToolNames`, or it would skip exactly the
-tools it should carry; `RESERVED_TOOL_NAMES` keeps both sets for the fallback and for the voice
+`McpDynamicTools` is told not to reserve these two names (only `bossTermOwnToolNames` and the
+setup tools below), or it would skip exactly the tools it should carry; `RESERVED_TOOL_NAMES` keeps both sets for the fallback and for the voice
 surface, which filters registry tools by it so the host tools appear there once.
+
+The four `setup_terminal_*` tools (Debug with Fluck) are the exception: they stay straight on the
+server in every mode (`serverRegisteredHostTools`, wired by `installBossServerTools`), and their
+names stay reserved with BossTerm's own. They are reachable only with the exact request token of an
+accepted handoff, the registry provider does not carry them, and routing them through it would ask
+for approval on every keystroke Fluck sends. `BossServerToolInstallTest` pins which door each tool
+uses in each host shape.
 
 The voice path is unchanged: BossTerm's voice executor calls `HostMcpTool.handler` directly under
 its own policy and never reaches the registry.
@@ -73,6 +80,12 @@ PowerShell equivalent on Windows, untested). The scrollback, the runner entry an
 result carry the path and the variable NAMES, never a value. A value may be a `{{secret:<id>}}`
 reference, which the host resolves after the operator approves; that is how a credential reaches
 a shell command without the agent ever holding it.
+
+No path leaves a file behind: it is deleted when the sidebar start throws or queues nothing, each
+new write removes env files older than 10 minutes (a command swallowed by a busy terminal), and
+plugin start and stop remove them all, since only this plugin instance's terminals can source one.
+A command that runs after its file was removed finds no file, and `&&` keeps it from running
+without its variables.
 
 Not a secure enclave: the shell and every process it starts have the value, and `printenv`
 prints it. The clean long-term shape is an `environment` parameter on BossTerm's tab creation,
