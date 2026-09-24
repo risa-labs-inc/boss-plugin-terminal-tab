@@ -138,6 +138,12 @@ object BossTermSetupController {
         private set
     @Volatile
     private var lastTerminalOutputForTest: String = ""
+    /** Test seam: creates runCommand's temp files, so tests can make that step fail. */
+    @Volatile
+    internal var setupTempFileFactoryForTest: ((prefix: String, suffix: String) -> File)? = null
+    /** Test seam: replaces the pre-handoff sudo credential drop with an observable script. */
+    @Volatile
+    internal var dropSudoCredentialsScriptForTest: String? = null
     @Volatile
     private var handoffRequestedSessionId: String? = null
     @Volatile
@@ -203,37 +209,39 @@ object BossTermSetupController {
         initializeTerminal(windowId, sessionId)
 
         activeSessionJob = scope.launch {
-            val supervised = runCatching {
-                supervisor?.start(sessionId, windowId, plans.map { it.state }) == true
-            }.getOrDefault(false)
-            updateSession(sessionId) { it.copy(fluckAvailable = supervised, supervisionChecked = true) }
+            failSessionOnUnexpectedError(sessionId, supervisor) {
+                val supervised = runCatching {
+                    supervisor?.start(sessionId, windowId, plans.map { it.state }) == true
+                }.getOrDefault(false)
+                updateSession(sessionId) { it.copy(fluckAvailable = supervised, supervisionChecked = true) }
 
-            var terminalFailure: String? = null
-            var terminalOutput: String? = null
-            for ((index, plan) in plans.withIndex()) {
-                updateTask(sessionId, index, SetupTaskStatus.RUNNING, supervisor)
-                appendOutput(sessionId, "Starting ${plan.state.title}")
-                val result = executeTaskWithRepairs(plan, index, sessionId, supervisor, supervised)
+                var terminalFailure: String? = null
+                var terminalOutput: String? = null
+                for ((index, plan) in plans.withIndex()) {
+                    updateTask(sessionId, index, SetupTaskStatus.RUNNING, supervisor)
+                    appendOutput(sessionId, "Starting ${plan.state.title}")
+                    val result = executeTaskWithRepairs(plan, index, sessionId, supervisor, supervised)
 
-                if (result.exitCode != 0) {
-                    terminalFailure = "${plan.state.title} needs attention"
-                    terminalOutput = result.output.takeLast(MAX_FAILURE_OUTPUT)
-                    updateTask(sessionId, index, SetupTaskStatus.NEEDS_ATTENTION, supervisor)
-                    break
+                    if (result.exitCode != 0) {
+                        terminalFailure = "${plan.state.title} needs attention"
+                        terminalOutput = result.output.takeLast(MAX_FAILURE_OUTPUT)
+                        updateTask(sessionId, index, SetupTaskStatus.NEEDS_ATTENTION, supervisor)
+                        break
+                    }
+                    updateTask(sessionId, index, SetupTaskStatus.COMPLETE, supervisor)
+                    appendOutput(sessionId, "Completed ${plan.state.title}")
                 }
-                updateTask(sessionId, index, SetupTaskStatus.COMPLETE, supervisor)
-                appendOutput(sessionId, "Completed ${plan.state.title}")
-            }
 
-            val success = terminalFailure == null
-            if (success && selections.authenticateGitHub) {
-                updateSession(sessionId) { it.copy(awaitingGitHubAuthentication = true) }
-            } else {
-                updateSession(sessionId) {
-                    it.copy(finished = true, failureMessage = terminalFailure, failureOutput = terminalOutput)
+                val success = terminalFailure == null
+                if (success && selections.authenticateGitHub) {
+                    updateSession(sessionId) { it.copy(awaitingGitHubAuthentication = true) }
+                } else {
+                    updateSession(sessionId) {
+                        it.copy(finished = true, failureMessage = terminalFailure, failureOutput = terminalOutput)
+                    }
+                    if (success) runCatching { settingsManager.updateSetting { copy(onboardingCompleted = true) } }
+                    runCatching { supervisor?.finish(sessionId, success, terminalFailure) }
                 }
-                if (success) runCatching { settingsManager.updateSetting { copy(onboardingCompleted = true) } }
-                runCatching { supervisor?.finish(sessionId, success, terminalFailure) }
             }
         }
         return true
@@ -410,6 +418,8 @@ object BossTermSetupController {
         val worker = activeSessionJob
         abortForPluginDispose()
         if (worker != null) runBlocking { worker.join() }
+        setupTempFileFactoryForTest = null
+        dropSudoCredentialsScriptForTest = null
         _state.value = BossTermSetupState()
     }
 
@@ -573,54 +583,103 @@ object BossTermSetupController {
                 return
             }
         activeSessionJob = scope.launch {
-            val result = runAgentHandoff(
-                sessionId,
-                plan,
-                CommandResult(-1, _state.value.failureOutput.orEmpty()),
-                request.supervisor,
-            )
-            var success = result.exitCode == 0
-            var failureOutput = result.output
-            updateTask(sessionId, failedIndex, if (success) SetupTaskStatus.COMPLETE else SetupTaskStatus.NEEDS_ATTENTION, request.supervisor)
-            if (success) {
-                updateSession(sessionId) { it.copy(finished = false, failureMessage = null, failureOutput = null) }
-                for (index in (failedIndex + 1) until plans.size) {
-                    updateTask(sessionId, index, SetupTaskStatus.RUNNING, request.supervisor)
-                    val remaining = executeTaskWithRepairs(
-                        plans[index],
-                        index,
-                        sessionId,
-                        request.supervisor,
-                        _state.value.fluckAvailable,
-                    )
-                    success = remaining.exitCode == 0
-                    failureOutput = remaining.output
-                    updateTask(
-                        sessionId,
-                        index,
-                        if (success) SetupTaskStatus.COMPLETE else SetupTaskStatus.NEEDS_ATTENTION,
-                        request.supervisor,
-                    )
-                    if (!success) break
-                }
-            }
-            if (success && request.selections.authenticateGitHub) {
-                updateSession(sessionId) {
-                    it.copy(finished = false, awaitingGitHubAuthentication = true, failureMessage = null, failureOutput = null)
-                }
-            } else {
-                updateSession(sessionId) {
-                    it.copy(
-                        finished = true,
-                        failureMessage = if (success) null else "Setup still needs attention",
-                        failureOutput = if (success) null else failureOutput.takeLast(MAX_FAILURE_OUTPUT),
-                    )
-                }
+            failSessionOnUnexpectedError(sessionId, request.supervisor) {
+                val result = runAgentHandoff(
+                    sessionId,
+                    plan,
+                    CommandResult(-1, _state.value.failureOutput.orEmpty()),
+                    request.supervisor,
+                )
+                var success = result.exitCode == 0
+                var failureOutput = result.output
+                updateTask(sessionId, failedIndex, if (success) SetupTaskStatus.COMPLETE else SetupTaskStatus.NEEDS_ATTENTION, request.supervisor)
                 if (success) {
-                    runCatching { request.settingsManager.updateSetting { copy(onboardingCompleted = true) } }
+                    updateSession(sessionId) { it.copy(finished = false, failureMessage = null, failureOutput = null) }
+                    for (index in (failedIndex + 1) until plans.size) {
+                        updateTask(sessionId, index, SetupTaskStatus.RUNNING, request.supervisor)
+                        val remaining = executeTaskWithRepairs(
+                            plans[index],
+                            index,
+                            sessionId,
+                            request.supervisor,
+                            _state.value.fluckAvailable,
+                        )
+                        success = remaining.exitCode == 0
+                        failureOutput = remaining.output
+                        updateTask(
+                            sessionId,
+                            index,
+                            if (success) SetupTaskStatus.COMPLETE else SetupTaskStatus.NEEDS_ATTENTION,
+                            request.supervisor,
+                        )
+                        if (!success) break
+                    }
                 }
-                runCatching { request.supervisor?.finish(sessionId, success, if (success) null else "Setup still needs attention") }
+                if (success && request.selections.authenticateGitHub) {
+                    updateSession(sessionId) {
+                        it.copy(finished = false, awaitingGitHubAuthentication = true, failureMessage = null, failureOutput = null)
+                    }
+                } else {
+                    updateSession(sessionId) {
+                        it.copy(
+                            finished = true,
+                            failureMessage = if (success) null else "Setup still needs attention",
+                            failureOutput = if (success) null else failureOutput.takeLast(MAX_FAILURE_OUTPUT),
+                        )
+                    }
+                    if (success) {
+                        runCatching { request.settingsManager.updateSetting { copy(onboardingCompleted = true) } }
+                    }
+                    runCatching { request.supervisor?.finish(sessionId, success, if (success) null else "Setup still needs attention") }
+                }
             }
+        }
+    }
+
+    /**
+     * Runs a setup session body so that any unexpected throw lands on the visible failure path.
+     *
+     * Each expected failure inside a session is handled where it happens, but the scope has no
+     * exception handler: anything else used to kill the coroutine with the session still
+     * "running", so retry, start, dismiss and Debug with Fluck all refused and only a plugin
+     * reload recovered. Here it becomes an ordinary failure the user can retry, and any live
+     * Fluck handoff token is withdrawn.
+     */
+    private suspend fun failSessionOnUnexpectedError(
+        sessionId: String,
+        supervisor: BossTermSetupSupervisor?,
+        body: suspend () -> Unit,
+    ) {
+        try {
+            body()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            synchronized(terminalLock) {
+                terminalStateOrNull()?.let(McpTerminalRegistry::unregister)
+                activeHandoffRequestId = null
+            }
+            handoffRequestedSessionId = null
+            resumeDebugAndVerifyRequested = false
+            updateSession(sessionId) { current ->
+                current.copy(
+                    tasks = current.tasks.map { task ->
+                        if (task.status == SetupTaskStatus.RUNNING || task.status == SetupTaskStatus.REPAIRING) {
+                            task.copy(status = SetupTaskStatus.NEEDS_ATTENTION)
+                        } else {
+                            task
+                        }
+                    },
+                    finished = true,
+                    awaitingGitHubAuthentication = false,
+                    agentDebugRequestInFlight = false,
+                    agentDebugActive = false,
+                    agentDebugAwaitingVerification = false,
+                    failureMessage = UNEXPECTED_FAILURE_MESSAGE,
+                    failureOutput = (error.message ?: error::class.simpleName.orEmpty()).takeLast(MAX_FAILURE_OUTPUT),
+                )
+            }
+            runCatching { supervisor?.finish(sessionId, false, UNEXPECTED_FAILURE_MESSAGE) }
         }
     }
 
@@ -657,6 +716,18 @@ object BossTermSetupController {
             ?: return handoffFailure(sessionId, "Fluck handoff request is unavailable")
         val windowId = terminalWindowId
             ?: return handoffFailure(sessionId, "Setup window is unavailable")
+        // Setup authenticates sudo up front (`sudo -v`), and its cached credentials would let
+        // anything the agent types run as root without a prompt for the rest of sudo's timestamp
+        // window. Drop them before the agent gets the PTY, so an administrator command stops at a
+        // real password prompt the user answers. `-K` removes every cached credential for the
+        // user regardless of terminal, so running it from runCommand's child shell is enough.
+        // If that can't be confirmed, refuse the handoff rather than hand over root.
+        if (!TargetOs.current().isWindows) {
+            val dropped = runCommand(dropSudoCredentialsScriptForTest ?: DROP_SUDO_CREDENTIALS_SCRIPT, sessionId)
+            if (dropped.exitCode != 0) {
+                return handoffFailure(sessionId, "Could not clear cached administrator access before debugging")
+            }
+        }
         // The dedicated setup tools resolve this terminal through the controller and require this
         // request token. Keep the setup PTY out of the generic MCP registry throughout handoff.
         val result = runCatching {
@@ -809,17 +880,20 @@ object BossTermSetupController {
         )
         initializeTerminal("test-window", sessionId)
         activeSessionJob = scope.launch {
-            updateTask(sessionId, 0, SetupTaskStatus.RUNNING, null)
-            val result = executeTaskWithRepairs(plan, 0, sessionId, supervisor, supervisor != null)
-            val success = result.exitCode == 0
-            updateTask(sessionId, 0, if (success) SetupTaskStatus.COMPLETE else SetupTaskStatus.NEEDS_ATTENTION, null)
-            updateSession(sessionId) {
-                it.copy(
-                    finished = !success || !authenticateGitHub,
-                    awaitingGitHubAuthentication = success && authenticateGitHub,
-                    failureMessage = if (success) null else "Test terminal task needs attention",
-                    failureOutput = result.output.takeLast(MAX_FAILURE_OUTPUT),
-                )
+            // Same guard as start(), so tests exercise the real unexpected-failure path.
+            failSessionOnUnexpectedError(sessionId, supervisor) {
+                updateTask(sessionId, 0, SetupTaskStatus.RUNNING, null)
+                val result = executeTaskWithRepairs(plan, 0, sessionId, supervisor, supervisor != null)
+                val success = result.exitCode == 0
+                updateTask(sessionId, 0, if (success) SetupTaskStatus.COMPLETE else SetupTaskStatus.NEEDS_ATTENTION, null)
+                updateSession(sessionId) {
+                    it.copy(
+                        finished = !success || !authenticateGitHub,
+                        awaitingGitHubAuthentication = success && authenticateGitHub,
+                        failureMessage = if (success) null else "Test terminal task needs attention",
+                        failureOutput = result.output.takeLast(MAX_FAILURE_OUTPUT),
+                    )
+                }
             }
         }
         return true
@@ -1167,17 +1241,23 @@ object BossTermSetupController {
         }
         if (_state.value.sessionId != sessionId) return CommandResult(-1, "Setup session changed")
         val windows = TargetOs.current().isWindows
-        val file = File.createTempFile("bossterm-setup-", if (windows) ".ps1" else ".sh").apply {
-            restrictToOwner(this)
-            writeText(script)
-            if (!windows) setExecutable(true)
-        }
         val token = UUID.randomUUID().toString().replace("-", "")
-        val wrapper = File.createTempFile("bossterm-setup-wrapper-", if (windows) ".ps1" else ".sh").also(::restrictToOwner)
         val completion = CompletableDeferred<CommandResult>()
         val pending = PendingTerminalCommand(SetupTerminalSentinelParser(token), completion)
         var poller: Job? = null
+        // Created inside the try: createTempFile and restrictToOwner can throw (full or read-only
+        // temp dir, a denied permission change), and a throw outside it escaped the session
+        // coroutine and left setup stuck "running" with no failure to retry from.
+        var file: File? = null
+        var wrapper: File? = null
         try {
+            val createTempFile = setupTempFileFactoryForTest ?: { prefix, suffix -> File.createTempFile(prefix, suffix) }
+            file = createTempFile("bossterm-setup-", if (windows) ".ps1" else ".sh").apply {
+                restrictToOwner(this)
+                writeText(script)
+                if (!windows) setExecutable(true)
+            }
+            wrapper = createTempFile("bossterm-setup-wrapper-", if (windows) ".ps1" else ".sh").also(::restrictToOwner)
             synchronized(terminalLock) {
                 check(pendingTerminalCommand == null) { "A setup command is already active" }
                 pendingTerminalCommand = pending
@@ -1251,8 +1331,8 @@ object BossTermSetupController {
                 if (pendingTerminalCommand === pending) pendingTerminalCommand = null
             }
             notifyDebugEligibilityChanged(sessionId)
-            file.delete()
-            wrapper.delete()
+            file?.delete()
+            wrapper?.delete()
         }
     }
 
@@ -1335,6 +1415,9 @@ object BossTermSetupController {
     private const val TERMINAL_READY_POLL_ATTEMPTS = 1_200
     private const val TIMEOUT_EXIT_CODE = 124
     private const val HANDOFF_FAILED_EXIT_CODE = 125
+    private const val UNEXPECTED_FAILURE_MESSAGE = "Setup could not continue"
+    internal const val DROP_SUDO_CREDENTIALS_SCRIPT =
+        "#!/bin/bash\ncommand -v sudo >/dev/null 2>&1 || exit 0\nsudo -K\n"
     private const val HANDOFF_BOUNDARY_TIMEOUT_MS = 5_000L
     private const val TERMINAL_BOUNDARY_PROBE_DELAY_MS = 150L
     private val USER_CANCEL_EXIT_CODES = setOf(TIMEOUT_EXIT_CODE, HANDOFF_FAILED_EXIT_CODE, 130, 143)

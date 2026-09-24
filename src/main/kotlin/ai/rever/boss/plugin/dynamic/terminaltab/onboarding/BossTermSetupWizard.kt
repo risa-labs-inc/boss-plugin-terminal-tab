@@ -1179,7 +1179,7 @@ private fun SupervisionNote(fluckBridgeAvailable: Boolean) {
         Spacer(Modifier.width(11.dp))
         Text(
             if (fluckBridgeAvailable) {
-                "Use Debug with Fluck if an installation step needs help; authorization stays with you."
+                "Use Debug with Fluck if an installation step needs help. Fluck can run commands in this terminal; administrator commands still ask you for your password."
             } else {
                 "Live progress and command output remain visible throughout setup."
             },
