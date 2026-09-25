@@ -64,10 +64,10 @@ Licensed under the [Apache License, Version 2.0](LICENSE).
 
 Copyright 2025-2026 Risa Labs Inc.
 
-## BOSS 9.5.25 inline-image compatibility
+## BOSS 9.5.25 rendering compatibility
 
-This release keeps the existing minimum host version and carries a temporary source
-override of BossTerm 1.2.167's `ImageRenderer`. It decodes encoded images using
+This release keeps the existing minimum host version and carries temporary source
+overrides of BossTerm 1.2.167's `ImageRenderer` and `FontUtils`. The image renderer decodes images using
 `androidx.compose.ui.res.loadImageBitmap`, so decoding happens inside the host's
 already-shared Compose runtime. The host owns Skia and the returned ImageBitmap;
 the plugin does not bundle Skia/Skiko or change the host's classloader policy.
@@ -83,3 +83,26 @@ part of that host's shared surface.
 direct Skia/Skiko resolution blocked, decodes a PNG through host Compose, and checks
 cache behavior and invalid-image handling. This fixes the reported inline-image crash;
 the host shared-rendering fix is still needed for other direct Skia/Skiko consumers.
+
+`FontUtils` discovers and categorizes system fonts using AWT and passes their names
+into Compose's `SystemFont`; Compose owns the corresponding rendering typefaces.
+Bundled font extraction, the default font, missing-font fallback, and optional emoji
+and math families retain their existing behavior. The desktop inventory can differ
+from Skia's inventory (for example, Java logical font families may appear).
+`CurrentHostFontUtilsTest` loads the shipped override with direct Skia/Skiko access
+blocked, enumerates settings fonts and resolves selected, bundled, fallback, and
+available emoji/math families through host Compose.
+
+Remaining direct references in bundled BossTerm 1.2.167:
+
+- MCP `show_image` WebP-to-PNG conversion still requires the upstream BossTerm fix
+  or the host shared-rendering fix; standard ImageIO-readable images already work.
+- macOS SF Symbol decoding in shared tab/status icons falls back to Material icons
+  on this host; the upstream library fix restores the native symbols.
+- Native title toolbar SVG rendering belongs to standalone BossTerm windows.
+  Windows auxiliary glass can encounter blocked Skiko access; BossTerm already
+  catches linkage failures and uses opaque surfaces. Neither platform path is
+  overridden here; the host shared-rendering fix restores them.
+
+Remove both pinned source overrides when the corrected BossTerm library is released
+and the dependency is upgraded. Do not bundle a second Skia/Skiko runtime.

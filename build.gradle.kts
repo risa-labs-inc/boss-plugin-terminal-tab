@@ -278,7 +278,7 @@ val pinnedLocalApiJar = provider {
 val bosstermVersion = "1.2.167"
 // This source override must be reviewed (or removed) whenever BossTerm changes.
 check(bosstermVersion == "1.2.167") {
-    "Review the inline-image ImageRenderer override before upgrading BossTerm"
+    "Review the ImageRenderer and FontUtils overrides before upgrading BossTerm"
 }
 
 repositories {
@@ -467,8 +467,10 @@ tasks.register<Jar>("buildPluginJar") {
                 jar.path.replace('\\', '/').contains("/com.google.zxing/")
         }.map { dependency ->
             zipTree(dependency).matching {
-                // The plugin compiles the same public API with host-owned image decoding.
+                // The plugin compiles the same public API with host-owned rendering.
                 // Exclude upstream explicitly instead of relying on duplicate entry ordering.
+                exclude("ai/rever/bossterm/compose/util/FontUtilsKt.class")
+                exclude("ai/rever/bossterm/compose/util/FontUtilsKt$*.class")
                 exclude("ai/rever/bossterm/compose/rendering/ImageRenderer.class")
                 exclude("ai/rever/bossterm/compose/rendering/ImageRenderer$*.class")
             }
