@@ -43,3 +43,13 @@ Validation: plugin tests cover restored login, provider absence, account changes
 and cleanup ordering. BossTerm tests cover host transport, stale directory responses and
 provider reinstallation. `supabase/tests/terminal_session_host_rpc_test.sql` covers database
 ownership, anonymous access, stale identity rejection and deletion.
+
+PR CI checks out the exact paired BossTerm commit pinned in `.github/workflows/test.yml`
+and uses its Gradle wrapper and the same composite build on Linux and Windows. This
+validates the pending API without publishing a library from a feature branch. Before
+merging the plugin, release BossTerm, align the Maven pin, and remove the temporary CI
+checkout/source arguments so CI validates the released artifact too.
+
+If any identity cleanup step fails, the remaining steps still run and sharing stays signed
+out. The collector stays alive and retries cleanup on the next host identity event. Errors
+log only operation names and exception types, never payloads or bearer URLs.

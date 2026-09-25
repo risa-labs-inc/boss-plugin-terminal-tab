@@ -133,15 +133,38 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
 
         pluginContext = context
         // Install before any BossTerm UI/default singleton can restore a standalone login.
-        accountBridge = HostAccountSessionBridge(context.authDataProvider, context.supabaseDataProvider) {
-            AccountSessionSource.refreshHostIdentity()
-            AccountAutoShare.Default.resetAccount()
-            SessionShareManager.revokeAccountShares()
-            AccountSessionDirectory.Default.resetAccount()
-            AccountAutoRemote.Default.resetAccount()
-        }.also {
-            it.start(context.pluginScope)
-            AccountSessionSource.install(it, context.pluginScope)
+        try {
+            val bridge = HostAccountSessionBridge(
+                context.authDataProvider,
+                context.supabaseDataProvider,
+                onFailure = { logAccountFailure("Account transition", it) },
+            ) {
+                var failure: Throwable? = null
+                suspend fun reset(name: String, action: suspend () -> Unit) {
+                    try {
+                        action()
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (t: Throwable) {
+                        logAccountFailure(name, t)
+                        if (failure == null) failure = t
+                    }
+                }
+                reset("Refresh account identity") { AccountSessionSource.refreshHostIdentity() }
+                reset("Reset auto sharing") { AccountAutoShare.Default.resetAccount() }
+                reset("Revoke account shares") { SessionShareManager.revokeAccountShares() }
+                reset("Reset account directory") { AccountSessionDirectory.Default.resetAccount() }
+                reset("Disconnect account viewers") { AccountAutoRemote.Default.resetAccount() }
+                failure?.let { throw it }
+            }
+            accountBridge = bridge
+            AccountSessionSource.install(bridge, context.pluginScope)
+            bridge.start(context.pluginScope)
+        } catch (t: Throwable) {
+            logAccountFailure("Initialize account sharing", t)
+            accountCleanup("Close account bridge") { accountBridge?.close() }
+            accountBridge = null
+            accountCleanup("Disconnect account source") { AccountSessionSource.disconnect() }
         }
         val setupSupervisor = BossTermFluckSupervisor(context)
         TerminalPluginContextHolder.setupSupervisor = setupSupervisor
@@ -216,6 +239,10 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         try {
             applySessionSharingFirstLaunchDefaults()
             SessionShareManager.start()
+            if (accountBridge == null) {
+                wireApprovalNotifications(context)
+                return
+            }
             accountPublisher = AccountSessionPublisher(
                 sharedTabIds = SessionShareManager.allSharedTabIds,
                 remoteUrl = SessionShareManager.remoteUrlFlow,
@@ -409,16 +436,30 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         }
     }
 
+    private fun logAccountFailure(operation: String, failure: Throwable) {
+        // Exception messages can contain bearer URLs or E2E secrets.
+        mcpLogger.warn(LogCategory.TERMINAL, "$operation failed (${failure.javaClass.simpleName})")
+    }
+
+    private inline fun accountCleanup(operation: String, action: () -> Unit) {
+        try {
+            action()
+        } catch (t: Throwable) {
+            logAccountFailure(operation, t)
+        }
+    }
+
     override fun dispose() {
-        AccountAutoRemote.Default.stop()
-        AccountSessionDirectory.Default.stop()
-        AccountAutoShare.Default.stop()
-        // Delete this process's registry rows while the host identity is still available.
-        accountPublisher?.stop()
+        accountCleanup("Stop account viewers") { AccountAutoRemote.Default.stop() }
+        accountCleanup("Stop account directory") { AccountSessionDirectory.Default.stop() }
+        accountCleanup("Stop auto sharing") { AccountAutoShare.Default.stop() }
+        // stop() synchronously waits for row deletion, bounded by BossTerm's timeout.
+        // Keep the host bridge open until it returns.
+        accountCleanup("Stop account publisher") { accountPublisher?.stop() }
         accountPublisher = null
-        accountBridge?.close()
+        accountCleanup("Close account bridge") { accountBridge?.close() }
         accountBridge = null
-        AccountSessionSource.disconnect()
+        accountCleanup("Disconnect account source") { AccountSessionSource.disconnect() }
         // Keep the signed-out bridge installed until the classloader is discarded: a still
         // composing old terminal must never fall back to BossTerm's standalone auth file.
         // Stop session sharing (idempotent; tears down the share server and

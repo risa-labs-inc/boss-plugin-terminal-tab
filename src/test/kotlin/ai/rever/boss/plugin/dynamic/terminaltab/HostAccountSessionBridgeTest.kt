@@ -81,4 +81,57 @@ class HostAccountSessionBridgeTest {
             } finally { bridge.close() }
         }
     }
+    @Test fun `failed revocation stays signed out and retries on later login`() = runBlocking {
+        val auth = Auth().apply { currentUser.value = user("one") }
+        var attempts = 0
+        val failures = mutableListOf<Throwable>()
+        val bridge = HostAccountSessionBridge(auth, Database(), onFailure = { failures += it }) {
+            attempts++
+            if (attempts == 1) error("revocation failed")
+        }
+        bridge.start(this)
+        try {
+            auth.currentUser.value = user("two")
+            yield()
+            assertEquals(AccountState.SignedOut, bridge.state.value)
+            assertFalse(bridge.upsert("two", "{}"))
+            assertEquals(1, failures.size)
+            auth.currentUser.value = user("three")
+            yield()
+            assertEquals(2, attempts)
+            assertEquals(AccountState.SignedIn("three@example.test", "three"), bridge.state.value)
+        } finally {
+            bridge.close()
+        }
+    }
+
+    @Test fun `email change does not revoke the same user sessions`() = runBlocking {
+        val auth = Auth().apply { currentUser.value = user("one") }
+        var revocations = 0
+        val bridge = HostAccountSessionBridge(auth, Database()) { revocations++ }
+        bridge.start(this)
+        try {
+            auth.currentUser.value = user("one").copy(email = "updated@example.test")
+            yield()
+            assertEquals(AccountState.SignedIn("updated@example.test", "one"), bridge.state.value)
+            assertEquals(0, revocations)
+        } finally {
+            bridge.close()
+        }
+    }
+
+    @Test fun `RPC failures return false for mutations and propagate for discovery`() = runBlocking {
+        val auth = Auth().apply { currentUser.value = user("one") }
+        val db = Database().apply { response = { Result.failure(IllegalStateException("unavailable")) } }
+        val bridge = HostAccountSessionBridge(auth, db) {}
+        bridge.start(this)
+        try {
+            assertFalse(bridge.upsert("one", "{}"))
+            assertFalse(bridge.delete("one", "share"))
+            assertFailsWith<IllegalStateException> { bridge.list("one", "now") }
+        } finally {
+            bridge.close()
+        }
+    }
+
 }

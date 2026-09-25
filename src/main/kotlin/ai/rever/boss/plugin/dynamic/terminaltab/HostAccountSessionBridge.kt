@@ -21,11 +21,13 @@ import kotlinx.serialization.json.put
 internal class HostAccountSessionBridge(
     private val auth: AuthDataProvider?,
     private val database: SupabaseDataProvider?,
+    private val onFailure: (Throwable) -> Unit = {},
     private val onIdentityChanging: suspend () -> Unit,
 ) : HostAccountSessions {
     private val mutableState = MutableStateFlow<AccountState>(AccountState.SignedOut)
     override val state = mutableState.asStateFlow()
     private var job: Job? = null
+    private var cleanupPending = false
 
     fun start(scope: CoroutineScope) {
         if (job != null) return
@@ -35,9 +37,22 @@ internal class HostAccountSessionBridge(
                 val next = user?.takeIf { database != null }?.let { AccountState.SignedIn(it.email, it.id) }
                     ?: AccountState.SignedOut
                 val previous = mutableState.value as? AccountState.SignedIn
-                if (previous?.userId != (next as? AccountState.SignedIn)?.userId) {
+                if (cleanupPending || previous?.userId != (next as? AccountState.SignedIn)?.userId) {
                     mutableState.value = AccountState.SignedOut
-                    if (previous != null) onIdentityChanging()
+                    cleanupPending = cleanupPending || previous != null
+                    if (cleanupPending) {
+                        try {
+                            onIdentityChanging()
+                            cleanupPending = false
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (t: Throwable) {
+                            onFailure(t)
+                            // Keep tracking login, but never publish under a new identity until
+                            // all old-account links and connections have been revoked.
+                            return@collect
+                        }
+                    }
                 }
                 mutableState.value = next
             }
