@@ -23,8 +23,8 @@ same classloader uses a stable identity/transport facade, never standalone crede
    the shared backend used by the debug build on 2026-09-25. Apply it to other backends before rollout.
    It adds owner-only, SECURITY INVOKER RPCs and rejects an expected identity that differs
    from `auth.uid()`. The existing `terminal_sessions` RLS policies remain authoritative.
-2. Release BossTerm with `HostAccountSessions` / `AccountSessionSource` (the plugin currently
-   targets the next library version, 1.2.169; align that pin with the actual release).
+2. BossTerm 1.2.169 contains `HostAccountSessions` / `AccountSessionSource` and the
+   initialization safety fix. The plugin and CI use this published Maven dependency.
 3. Build/release this terminal plugin. No new host plugin API or BossConsole binary is needed.
 
 For paired local development before the library release, use a source composite build:
@@ -44,11 +44,9 @@ and cleanup ordering. BossTerm tests cover host transport, stale directory respo
 provider reinstallation. `supabase/tests/terminal_session_host_rpc_test.sql` covers database
 ownership, anonymous access, stale identity rejection and deletion.
 
-PR CI checks out the exact paired BossTerm commit pinned in `.github/workflows/test.yml`
-and uses its Gradle wrapper and the same composite build on Linux and Windows. This
-validates the pending API without publishing a library from a feature branch. Before
-merging the plugin, release BossTerm, align the Maven pin, and remove the temporary CI
-checkout/source arguments so CI validates the released artifact too.
+CI validates the published BossTerm 1.2.169 artifact on Linux and Windows. The source
+composite property remains available for opt-in local development. FontUtils and
+ImageRenderer overrides match the release source apart from attribution comments.
 
 If any identity cleanup step fails, the remaining steps still run and sharing stays signed
 out. The collector stays alive and retries cleanup on the next host identity event. Errors

@@ -22,17 +22,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Temporary paired-source validation until BossTerm#432 is released.
-      # Release builds still resolve the published dependency; remove this checkout
-      # and the source property when the final Maven version is available.
-      - name: Checkout paired BossTerm
-        uses: actions/checkout@v4
-        with:
-          repository: kshivang/BossTerm
-          ref: 03a1802e87d27b4a4b19fbdca2c9e126db0269d2
-          path: .paired-bossterm
-          persist-credentials: false
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -70,7 +59,7 @@ jobs:
         if: runner.os == 'Linux'
         # The setup lifecycle tests render a real terminal. Provide a display
         # on Linux and also validate the installable bundled artifact.
-        run: xvfb-run -a bash .paired-bossterm/gradlew -p . -PbosstermSourceDir=.paired-bossterm test buildPluginJar --no-daemon
+        run: xvfb-run -a ./gradlew test buildPluginJar --no-daemon
         env:
           CI: 'true'
 
@@ -80,6 +69,6 @@ jobs:
       # Restricted execution policy, the default on Windows client editions.
       - name: Verify Windows scripts
         if: runner.os == 'Windows'
-        run: bash .paired-bossterm/gradlew -p . -PbosstermSourceDir=.paired-bossterm test --tests '*HostAccountSessionBridgeTest' --tests '*OnboardingInstallScriptTest' --tests '*PluginManifestTest' --tests '*SidebarEnvInjectionTest' buildPluginJar --no-daemon
+        run: ./gradlew test --tests '*HostAccountSessionBridgeTest' --tests '*OnboardingInstallScriptTest' --tests '*PluginManifestTest' --tests '*SidebarEnvInjectionTest' buildPluginJar --no-daemon
         env:
           CI: 'true'
