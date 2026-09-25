@@ -11,6 +11,11 @@ import ai.rever.bossterm.compose.mcp.BossTermMcpManager
 import ai.rever.bossterm.compose.mcp.McpTerminalRegistry
 import ai.rever.boss.plugin.dynamic.terminaltab.onboarding.BossTermSetupController
 import ai.rever.bossterm.compose.settings.SettingsManager
+import ai.rever.bossterm.compose.share.AccountAutoRemote
+import ai.rever.bossterm.compose.share.AccountAutoShare
+import ai.rever.bossterm.compose.share.AccountSessionDirectory
+import ai.rever.bossterm.compose.share.AccountSessionPublisher
+import ai.rever.bossterm.compose.share.AccountSessionSource
 import ai.rever.bossterm.compose.share.SessionShareManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +23,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import java.util.concurrent.ConcurrentHashMap
 
 private val mcpLogger = BossLogger.forComponent("TerminalTabMcp")
@@ -57,6 +65,8 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
     override val url: String = "https://github.com/risa-labs-inc/boss-plugin-terminal-tab"
 
     private var pluginContext: PluginContext? = null
+    private var accountBridge: HostAccountSessionBridge? = null
+    private var accountPublisher: AccountSessionPublisher? = null
 
     /** Whether [HostMcpToolProvider] is registered; decides how [startMcpServer] wires the two host tools. */
     private var hostToolsViaRegistry: Boolean = false
@@ -122,6 +132,17 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         sweepSidebarEnvFiles("start")
 
         pluginContext = context
+        // Install before any BossTerm UI/default singleton can restore a standalone login.
+        accountBridge = HostAccountSessionBridge(context.authDataProvider, context.supabaseDataProvider) {
+            AccountSessionSource.refreshHostIdentity()
+            AccountAutoShare.Default.resetAccount()
+            SessionShareManager.revokeAccountShares()
+            AccountSessionDirectory.Default.resetAccount()
+            AccountAutoRemote.Default.resetAccount()
+        }.also {
+            it.start(context.pluginScope)
+            AccountSessionSource.install(it, context.pluginScope)
+        }
         val setupSupervisor = BossTermFluckSupervisor(context)
         TerminalPluginContextHolder.setupSupervisor = setupSupervisor
         val setupStatusItem = BossTermSetupStatusItem()
@@ -195,6 +216,25 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         try {
             applySessionSharingFirstLaunchDefaults()
             SessionShareManager.start()
+            accountPublisher = AccountSessionPublisher(
+                sharedTabIds = SessionShareManager.allSharedTabIds,
+                remoteUrl = SessionShareManager.remoteUrlFlow,
+                accountState = AccountSessionSource.state,
+                // The collector belongs to the plugin, so an unload releases its classloader.
+                enabled = SettingsManager.instance.settings.map { it.publishSessionsToAccount }
+                    .stateIn(context.pluginScope, SharingStarted.Eagerly, SettingsManager.instance.settings.value.publishSessionsToAccount),
+                infoFor = SessionShareManager::infoFor,
+                sessionNameFor = SessionShareManager::sessionNameFor,
+                deviceName = SessionShareManager::defaultSessionName,
+                accessToken = { null },
+                restBaseUrl = "host RPC",
+                anonKey = "",
+                appVersion = ai.rever.bossterm.compose.update.Version.CURRENT.toString(),
+                host = checkNotNull(AccountSessionSource.host),
+            ).also { it.start() }
+            AccountAutoShare.Default.start()
+            AccountSessionDirectory.Default.start()
+            AccountAutoRemote.Default.start()
             wireApprovalNotifications(context)
             mcpLogger.info(LogCategory.TERMINAL, "Session sharing armed", mapOf(
                 "port" to SettingsManager.instance.settings.value.sessionSharingPort
@@ -370,6 +410,17 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
     }
 
     override fun dispose() {
+        AccountAutoRemote.Default.stop()
+        AccountSessionDirectory.Default.stop()
+        AccountAutoShare.Default.stop()
+        // Delete this process's registry rows while the host identity is still available.
+        accountPublisher?.stop()
+        accountPublisher = null
+        accountBridge?.close()
+        accountBridge = null
+        AccountSessionSource.disconnect()
+        // Keep the signed-out bridge installed until the classloader is discarded: a still
+        // composing old terminal must never fall back to BossTerm's standalone auth file.
         // Stop session sharing (idempotent; tears down the share server and
         // tunnels) and clear any approval toasts still on screen. The
         // pendingRequests collector dies with pluginScope cancellation.
