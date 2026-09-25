@@ -29,7 +29,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: kshivang/BossTerm
-          ref: 42f9d110a5fd891a47fef968bcbf9dcf09ce7778
+          ref: 03a1802e87d27b4a4b19fbdca2c9e126db0269d2
           path: .paired-bossterm
           persist-credentials: false
 

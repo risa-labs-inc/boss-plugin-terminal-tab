@@ -239,10 +239,19 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         try {
             applySessionSharingFirstLaunchDefaults()
             SessionShareManager.start()
-            if (accountBridge == null) {
-                wireApprovalNotifications(context)
-                return
-            }
+            wireApprovalNotifications(context)
+            startAccountServices(context)
+            mcpLogger.info(LogCategory.TERMINAL, "Session sharing armed", mapOf(
+                "port" to SettingsManager.instance.settings.value.sessionSharingPort
+            ))
+        } catch (t: Throwable) {
+            mcpLogger.warn(LogCategory.TERMINAL, "Failed to start session sharing; terminals still work", error = t)
+        }
+    }
+
+    private fun startAccountServices(context: PluginContext) {
+        if (accountBridge == null) return
+        try {
             accountPublisher = AccountSessionPublisher(
                 sharedTabIds = SessionShareManager.allSharedTabIds,
                 remoteUrl = SessionShareManager.remoteUrlFlow,
@@ -262,12 +271,9 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
             AccountAutoShare.Default.start()
             AccountSessionDirectory.Default.start()
             AccountAutoRemote.Default.start()
-            wireApprovalNotifications(context)
-            mcpLogger.info(LogCategory.TERMINAL, "Session sharing armed", mapOf(
-                "port" to SettingsManager.instance.settings.value.sessionSharingPort
-            ))
         } catch (t: Throwable) {
-            mcpLogger.warn(LogCategory.TERMINAL, "Failed to start session sharing; terminals still work", error = t)
+            logAccountFailure("Start account services", t)
+            stopAccountServices()
         }
     }
 
@@ -449,7 +455,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         }
     }
 
-    override fun dispose() {
+    private fun stopAccountServices() {
         accountCleanup("Stop account viewers") { AccountAutoRemote.Default.stop() }
         accountCleanup("Stop account directory") { AccountSessionDirectory.Default.stop() }
         accountCleanup("Stop auto sharing") { AccountAutoShare.Default.stop() }
@@ -460,6 +466,10 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         accountCleanup("Close account bridge") { accountBridge?.close() }
         accountBridge = null
         accountCleanup("Disconnect account source") { AccountSessionSource.disconnect() }
+    }
+
+    override fun dispose() {
+        stopAccountServices()
         // Keep the signed-out bridge installed until the classloader is discarded: a still
         // composing old terminal must never fall back to BossTerm's standalone auth file.
         // Stop session sharing (idempotent; tears down the share server and
