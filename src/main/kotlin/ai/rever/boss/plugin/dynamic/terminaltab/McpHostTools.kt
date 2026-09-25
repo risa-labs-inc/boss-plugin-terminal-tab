@@ -265,21 +265,26 @@ private suspend fun setupSignal(args: JsonObject): CallToolResult {
 
 private const val RUN_IN_SIDEBAR_DESCRIPTION =
     "Open BossConsole's sidebar terminal in the focused window and run a shell " +
-        "command there — the same flow as the in-app Runner. The sidebar terminal then " +
+        "command there, the same flow as the in-app Runner. The sidebar terminal then " +
         "appears in list_tabs / read_scrollback like any other tab, so you can read its " +
         "output afterwards. Pass config_id to keep a stable tab per run configuration, and " +
         "is_rerun=true (with config_id) to re-run in that existing tab (sends Ctrl+C, " +
         "clears, then re-runs) instead of opening a new one. Pass env to give the command " +
         "environment variables without putting their values on the command line: a value " +
         "may be a {{secret:<id>}} reference, which the host resolves after the operator " +
-        "approves, so a credential reaches the shell without ever reaching you."
+        "approves, so a credential reaches the shell without ever reaching you. Put secret " +
+        "references ONLY in env values, never in command, working_dir or name: the host " +
+        "resolves a reference in any argument, and one in command is typed into the terminal, " +
+        "where it stays in the scrollback in plain text."
 
 private fun runInSidebarSchema(): ToolSchema =
     ToolSchema(
         properties = buildJsonObject {
             putJsonObject("command") {
                 put("type", "string")
-                put("description", "Shell command to run in the sidebar terminal.")
+                put("description", "Shell command to run in the sidebar terminal. Never put a " +
+                        "{{secret:<id>}} reference here: pass the value through env and read it " +
+                        "as a variable (for example \$TOKEN), or it ends up in the scrollback.")
             }
             putJsonObject("working_dir") {
                 put("type", "string")

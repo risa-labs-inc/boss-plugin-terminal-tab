@@ -112,6 +112,16 @@ call to come through the governed registry on a BossConsole with #822 (merged af
 reference that arrives unresolved (the voice surface, a host without the registry, or an older
 host) is refused, naming the keys, rather than sent to the shell as literal text.
 
+**Secret references belong in `env` values only.** BossConsole's pre-pass (#822) resolves a
+reference in every string argument of a governed call, not just `env`, and once substituted a
+value cannot be told apart from ordinary text here. Host result scrubbing removes it from this
+call's result, but a reference in `command` of a call without `env` is typed into the terminal and
+stays in the scrollback in plain text, where a later `read_scrollback` (a separate call the
+scrubber does not cover) returns it. With `env`, the command lives in the file and only the loader
+is typed. The tool's description tells agents this. The real fix is host-side: a tool declaring
+which arguments may carry references (for `run_in_sidebar`, only `env`) and the host refusing them
+elsewhere. That needs a boss-plugin-api and BossConsole change and is a follow-up.
+
 Also refused before anything is written: keys that are not variable names, and keys that differ
 only in case (`Path` and `PATH` are one variable on Windows). Names that change how every program
 loads code or finds executables (`PATH`, `LD_PRELOAD`, `DYLD_*`, `BASH_ENV`, `NODE_OPTIONS` and so
