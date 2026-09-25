@@ -56,3 +56,23 @@ Store data must be verified separately from this repository's build.
 Licensed under the [Apache License, Version 2.0](LICENSE).
 
 Copyright 2025-2026 Risa Labs Inc.
+
+## BOSS 9.5.25 inline-image compatibility
+
+This release keeps the existing minimum host version and carries a temporary source
+override of BossTerm 1.2.167's `ImageRenderer`. It decodes encoded images using
+`androidx.compose.ui.res.loadImageBitmap`, so decoding happens inside the host's
+already-shared Compose runtime. The host owns Skia and the returned ImageBitmap;
+the plugin does not bundle Skia/Skiko or change the host's classloader policy.
+
+The override preserves BossTerm's renderer API, cache and placement behavior. Its
+upstream class is explicitly excluded from the fat JAR. The build requires reviewing
+or removing this override when upgrading BossTerm; remove it once the upstream
+renderer uses the shared Compose API. The public Compose API is deprecated but remains
+available on the affected host, unlike the recommended resources package which is not
+part of that host's shared surface.
+
+`CurrentHostImageRendererTest` loads the renderer from the shipped plugin JAR with
+direct Skia/Skiko resolution blocked, decodes a PNG through host Compose, and checks
+cache behavior and invalid-image handling. This fixes the reported inline-image crash;
+the host shared-rendering fix is still needed for other direct Skia/Skiko consumers.

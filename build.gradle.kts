@@ -276,6 +276,10 @@ val pinnedLocalApiJar = provider {
 // synchronously to settings.json under bossterm.settings.dir:
 // applyCollapsedTabStripDefault reads it back right after updateSetting.
 val bosstermVersion = "1.2.167"
+// This source override must be reviewed (or removed) whenever BossTerm changes.
+check(bosstermVersion == "1.2.167") {
+    "Review the inline-image ImageRenderer override before upgrading BossTerm"
+}
 
 repositories {
     google()
@@ -338,6 +342,7 @@ dependencies {
     // JVM test. bossterm-compose is already `implementation`, so the voice seam
     // (ExternalVoiceTool / VoiceToolPolicy) comes along for free.
     testImplementation(kotlin("test"))
+    testImplementation("com.risaboss:bossterm-core-jvm:$bosstermVersion")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     // The Compose compiler plugin runs over the test compilation too and refuses to
     // work without the runtime on the class path, even though no test touches a
@@ -368,6 +373,8 @@ tasks.withType<Test>().configureEach {
     inputs.files(".github/workflows/build.yml", ".github/workflows/test.yml")
         .withPropertyName("apiPinWorkflows")
         .withPathSensitivity(PathSensitivity.RELATIVE)
+    dependsOn("buildPluginJar")
+    systemProperty("pluginJar", layout.buildDirectory.file("libs/boss-plugin-terminal-tab-${version}.jar").get().asFile.absolutePath)
     systemProperty("pluginVersion", version.toString())
     systemProperty("bossPluginApiVersion", bossPluginApiVersion)
     systemProperty("pluginProjectDir", projectDir.absolutePath)
@@ -456,7 +463,14 @@ tasks.register<Jar>("buildPluginJar") {
                 // catches the transitive zxing:javase if it ever appears).
                 // zxing is not host-shared, so it must be bundled child-first.
                 jar.path.replace('\\', '/').contains("/com.google.zxing/")
-        }.map { zipTree(it) }
+        }.map { dependency ->
+            zipTree(dependency).matching {
+                // The plugin compiles the same public API with host-owned image decoding.
+                // Exclude upstream explicitly instead of relying on duplicate entry ordering.
+                exclude("ai/rever/bossterm/compose/rendering/ImageRenderer.class")
+                exclude("ai/rever/bossterm/compose/rendering/ImageRenderer$*.class")
+            }
+        }
     })
 
     doLast {
