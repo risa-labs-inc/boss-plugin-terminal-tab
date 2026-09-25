@@ -315,6 +315,8 @@ dependencies {
     // compileOnly, so nothing is added to the jar that is not already there.
     compileOnly("com.risaboss:bossterm-core-jvm:$bosstermVersion")
 
+    // Compose and its Skia/Skiko rendering runtime belong to BossConsole >= 9.5.26.
+    // BossTerm passes Skia images into host Compose; bundling another copy breaks type identity.
     // Compose dependencies — compileOnly so we don't duplicate the host's
     // Compose runtime in the plugin JAR. The plugin's @Composable functions
     // run inside the host's Compose runtime via classloader parent delegation.
@@ -471,6 +473,24 @@ tasks.register<Jar>("buildPluginJar") {
             val missing = requiredEntries.filter { zip.getEntry(it) == null }
             check(missing.isEmpty()) {
                 "Installable Terminal Tab JAR is missing bundled runtime entries: ${missing.joinToString()}"
+            }
+        }
+    }
+    // Inspect the final artifact, including classes pulled in transitively by BossTerm.
+    // Never ship another owner of Compose's rendering classes or Skiko's native library.
+    doLast {
+        ZipFile(archiveFile.get().asFile).use { jar ->
+            val forbidden = jar.entries().asSequence().map { it.name }.filter {
+                it.startsWith("androidx/compose/") ||
+                    it.startsWith("org/jetbrains/skia/") ||
+                    it.startsWith("org/jetbrains/skiko/") ||
+                    it.substringAfterLast('/').let { name ->
+                        (name.startsWith("libskiko") || name.startsWith("skiko")) &&
+                            (name.endsWith(".dylib") || name.endsWith(".so") || name.endsWith(".dll"))
+                    }
+            }.toList()
+            check(forbidden.isEmpty()) {
+                "Rendering runtime must be supplied by BossConsole, not the terminal plugin: $forbidden"
             }
         }
     }

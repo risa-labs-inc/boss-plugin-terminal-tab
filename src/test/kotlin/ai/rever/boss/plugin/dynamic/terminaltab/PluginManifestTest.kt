@@ -11,6 +11,18 @@ import kotlin.test.assertTrue
 
 class PluginManifestTest {
     @Test
+    fun `inline image rendering requires the host with shared Skia`() {
+        val resource = assertNotNull(javaClass.classLoader.getResource("META-INF/boss-plugin/plugin.json"))
+        val manifest = Json.parseToJsonElement(resource.readText()).jsonObject
+        val minimum = assertNotNull(manifest["minBossVersion"]).jsonPrimitive.content
+        val parts = minimum.split('.').map(String::toInt)
+        assertEquals(3, parts.size)
+        val difference = parts.zip(listOf(9, 5, 26)).firstOrNull { (a, b) -> a != b }
+        assertTrue(difference == null || difference.first > difference.second,
+            "Inline images require BossConsole 9.5.26 or later to share Skia/Skiko")
+    }
+
+    @Test
     fun `processed manifest gate matches compile and workflow API pins`() {
         val resource = assertNotNull(javaClass.classLoader.getResource("META-INF/boss-plugin/plugin.json"))
         val manifest = Json.parseToJsonElement(resource.readText()).jsonObject
