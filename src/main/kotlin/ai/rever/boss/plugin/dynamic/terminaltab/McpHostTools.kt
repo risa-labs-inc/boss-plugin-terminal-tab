@@ -344,6 +344,13 @@ private suspend fun runInSidebar(args: JsonObject): CallToolResult {
     val isRerun = args.bool("is_rerun") ?: false
     val env = args.envMap("env") ?: return errorResult("env must be an object of string values")
     SidebarEnvInjection.validationError(env)?.let { return errorResult(it) }
+    SidebarEnvInjection.unresolvedSecretKeys(env).takeIf { it.isNotEmpty() }?.let { keys ->
+        return errorResult(
+            "Unresolved {{secret:...}} reference in env ${keys.joinToString()}: this call did not come through the " +
+                "host's approval gate, which is what resolves references, so the literal text would reach the shell. " +
+                "Nothing was run.",
+        )
+    }
     // The env file is written in the sidebar shell's own language; for a shell without a format
     // (cmd.exe, nushell, csh...), refuse before anything is written rather than send it a line
     // it cannot parse. A command without env runs in any shell, as before.
@@ -385,7 +392,8 @@ private suspend fun runInSidebar(args: JsonObject): CallToolResult {
             } catch (t: Throwable) {
                 envFile?.delete()
                 hostToolsLogger.warn(LogCategory.TERMINAL, "run_in_sidebar: could not write env file", error = t)
-                return errorResult("Failed to prepare environment for the command: ${t.message}")
+                // The exception type only: a message could one day quote file content, a value.
+                return errorResult("Failed to prepare environment for the command (${t::class.simpleName}). Nothing was run.")
             }
         }
 
@@ -424,6 +432,9 @@ private suspend fun runInSidebar(args: JsonObject): CallToolResult {
         // detail, and the values are never echoed. Only the NAMES say what was injected.
         put("command", command)
         put("envKeys", JsonArray(env.keys.sorted().map(::JsonPrimitive)))
+        SidebarEnvInjection.sensitiveKeys(env).takeIf { it.isNotEmpty() }?.let { keys ->
+            put("sensitiveEnvKeys", JsonArray(keys.map(::JsonPrimitive)))
+        }
         put("configId", configId)
         put("isRerun", isRerun)
         put("panelOpenRequested", panelRequested)

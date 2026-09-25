@@ -83,6 +83,20 @@ class SidebarEnvInjectionTest {
     }
 
     @Test
+    fun `keys that differ only in case are refused, naming keys only`() {
+        val error = assertNotNull(SidebarEnvInjection.validationError(mapOf("Path" to "secret-1", "PATH" to "secret-2", "OK" to "x")))
+        assertTrue(error.contains("PATH") && error.contains("Path"), error)
+        assertFalse(error.contains("secret-"), "a refusal names keys, never values: $error")
+    }
+
+    @Test
+    fun `unresolved secret references and sensitive names are found by key`() {
+        val env = mapOf("A" to "{{secret:abc}}", "B" to "x {{ secret : id }} y", "C" to "plain {secret:x}", "LD_PRELOAD" to "v", "DYLD_INSERT_LIBRARIES" to "v", "Path" to "v")
+        assertEquals(listOf("A", "B"), SidebarEnvInjection.unresolvedSecretKeys(env))
+        assertEquals(listOf("DYLD_INSERT_LIBRARIES", "LD_PRELOAD", "Path"), SidebarEnvInjection.sensitiveKeys(env))
+    }
+
+    @Test
     fun `the shell family comes from the shell's name`() {
         assertEquals(ShellFamily.POSIX, SidebarEnvInjection.shellFamily("/bin/zsh"))
         assertEquals(ShellFamily.POSIX, SidebarEnvInjection.shellFamily("/usr/local/bin/bash"))
@@ -229,7 +243,7 @@ class SidebarEnvInjectionTest {
         val file = SidebarEnvInjection.writeEnvFile(mapOf("TOKEN" to hostile, "KEEP" to "new"), command, tempDir(), ShellFamily.POWERSHELL)
         val loader = SidebarEnvInjection.loaderCommand(file, ShellFamily.POWERSHELL)
         // Restricted blocks every .ps1, which is what broke dot-sourcing an env script.
-        val script = "\$env:KEEP = 'old'; $loader; Write-Output ('AFTER_TOKEN=[' + \$env:TOKEN + ']'); Write-Output ('AFTER_KEEP=' + \$env:KEEP)"
+        val script = "\$env:KEEP = 'old'; $loader; Write-Output ('AFTER_TOKEN=[' + \$env:TOKEN + ']'); Write-Output ('AFTER_KEEP=' + \$env:KEEP); $LEFTOVERS"
 
         val (exit, output) = run(exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Restricted", "-Command", script)
 
@@ -239,7 +253,26 @@ class SidebarEnvInjectionTest {
         assertEquals(hostile, String(Base64.getDecoder().decode(encoded), Charsets.UTF_8), "the value was altered: $output")
         assertTrue("AFTER_TOKEN=[]" in output, "TOKEN outlived the command: $output")
         assertTrue("AFTER_KEEP=old" in output, "a variable set before must be put back: $output")
+        // The loader runs at the prompt, in the session's global scope: none of its working
+        // variables (the decoded values among them) may outlive it for a later send_input to read.
+        assertTrue("LEFTOVERS=0" in output, "loader variables outlived the command: $output")
         assertFalse(file.exists(), "the file is removed")
+    }
+
+    @Test
+    fun `real powershell restores a variable given twice in different case`() {
+        val exe = powershell ?: return
+        // Straight to writeEnvFile, past validationError, which refuses this pair: the loader must
+        // still restore the original rather than the value it set a moment before.
+        val file = SidebarEnvInjection.writeEnvFile(mapOf("Boss_Case_Var" to "first", "BOSS_CASE_VAR" to "second"), "Write-Output 'RAN'", tempDir(), ShellFamily.POWERSHELL)
+        val script = "\$env:BOSS_CASE_VAR = 'original'; ${SidebarEnvInjection.loaderCommand(file, ShellFamily.POWERSHELL)}; " +
+            "Write-Output ('AFTER=' + \$env:BOSS_CASE_VAR)"
+
+        val (_, output) = run(exe, "-NoProfile", "-NonInteractive", "-Command", script)
+
+        assertTrue("RAN" in output, output)
+        // On Windows the two spellings are one variable; on Linux pwsh they are two, and each is restored.
+        assertTrue("AFTER=original" in output, "the injected value stayed in the session: $output")
     }
 
     @Test
@@ -257,12 +290,21 @@ class SidebarEnvInjectionTest {
     }
 
     @Test
-    fun `real powershell runs nothing when the file is gone`() {
+    fun `real powershell runs nothing when the file is gone, and leaves no variables`() {
         val exe = powershell ?: return
         val missing = File(tempDir(), "env-gone.env")
+        val script = SidebarEnvInjection.loaderCommand(missing, ShellFamily.POWERSHELL) + "; " + LEFTOVERS
 
-        val (_, output) = run(exe, "-NoProfile", "-NonInteractive", "-Command", SidebarEnvInjection.loaderCommand(missing, ShellFamily.POWERSHELL))
+        val (_, output) = run(exe, "-NoProfile", "-NonInteractive", "-Command", script)
 
         assertTrue(SidebarEnvInjection.MISSING_ENV_MESSAGE in output.replace(Regex("\\s+"), " "), "should say why: $output")
+        assertTrue("LEFTOVERS=0" in output, "loader variables outlived it: $output")
+    }
+
+    private companion object {
+        /** Prints how many of the loader's working variables are still in the session. */
+        val LEFTOVERS = "Write-Output ('LEFTOVERS=' + @(Get-Variable -Name " +
+            SidebarEnvInjection.POWERSHELL_WORKING_VARIABLES.joinToString(",") +
+            " -ErrorAction SilentlyContinue).Count)"
     }
 }

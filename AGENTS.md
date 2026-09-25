@@ -95,7 +95,9 @@ The file is written in the sidebar shell's own language, detected from BossTerm'
 - PowerShell: the file is data (`NAME=<base64>` lines and one `:<base64 of the command>` line), read
   with plain .NET calls, never dot-sourced, so the execution policy cannot block it (`Restricted`
   is the default on Windows client editions) and no value reaches the parser. The command runs with
-  `Invoke-Expression`, and a `finally` restores every variable afterwards.
+  `Invoke-Expression`, and a `finally` restores every variable afterwards. The loader runs in the
+  session's global scope, so an outer `finally` also removes its own working variables (they
+  hold the decoded values), which would otherwise be readable by a later `send_input`.
 - Any other shell (cmd.exe, nushell, csh): `env` is refused with a clear error and nothing is
   written or run. A command without `env` runs in any shell as before.
 
@@ -105,9 +107,16 @@ again through the agent. The command's own exit status comes through. The result
 nothing was started.
 
 A value may be a `{{secret:<id>}}` reference, which the host resolves after the operator approves;
-that is how a credential reaches a shell command without the agent ever holding it. That needs a
-BossConsole with #822 (merged after 9.5.23); on an older host the literal `{{secret:<id>}}` string
-reaches the shell.
+that is how a credential reaches a shell command without the agent ever holding it. That needs the
+call to come through the governed registry on a BossConsole with #822 (merged after 9.5.23). A
+reference that arrives unresolved (the voice surface, a host without the registry, or an older
+host) is refused, naming the keys, rather than sent to the shell as literal text.
+
+Also refused before anything is written: keys that are not variable names, and keys that differ
+only in case (`Path` and `PATH` are one variable on Windows). Names that change how every program
+loads code or finds executables (`PATH`, `LD_PRELOAD`, `DYLD_*`, `BASH_ENV`, `NODE_OPTIONS` and so
+on) are allowed, since the operator approved the call, but listed as `sensitiveEnvKeys` in the
+result. Errors name keys and exception types, never values or exception messages.
 
 No path leaves a file behind: it is deleted when the sidebar start throws or queues nothing, each
 new write removes this process's env files older than 10 minutes (a command swallowed by a busy

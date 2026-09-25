@@ -98,6 +98,33 @@ internal object SidebarEnvInjection {
     private val ownerOnlyDir: Set<PosixFilePermission> =
         setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE)
 
+    /** A `{{secret:<id>}}` reference as the host writes it, in any spacing. */
+    private val secretReference = Regex("\\{\\{\\s*secret\\s*:[^}]*}}")
+
+    /**
+     * Keys whose value still holds a `{{secret:<id>}}` reference. The host resolves references
+     * before the tool runs when it comes through the governed registry; one that is still here
+     * came another way (the voice surface, a host without the registry, or one older than
+     * BossConsole #822), and would reach the shell as the literal text. Names only.
+     */
+    fun unresolvedSecretKeys(env: Map<String, String>): List<String> =
+        env.filterValues { secretReference.containsMatchIn(it) }.keys.sorted()
+
+    /**
+     * Names that change how every program the command starts loads code or finds executables. Not
+     * refused (with approval in front, the operator decides), but listed in the result so a reader
+     * notices that, say, a secret went into `LD_PRELOAD`.
+     */
+    private val sensitiveNames: Set<String> = setOf(
+        "PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "BASH_ENV", "ENV", "PROMPT_COMMAND",
+        "ZDOTDIR", "IFS", "PYTHONPATH", "PYTHONSTARTUP", "NODE_OPTIONS", "PERL5OPT", "RUBYOPT",
+        "JAVA_TOOL_OPTIONS", "GIT_SSH_COMMAND", "PSMODULEPATH", "COMSPEC", "PATHEXT",
+    )
+
+    /** The keys of [env] in [sensitiveNames] or starting with `DYLD_` (macOS's loader variables). */
+    fun sensitiveKeys(env: Map<String, String>): List<String> =
+        env.keys.filter { it.uppercase() in sensitiveNames || it.uppercase().startsWith("DYLD_") }.sorted()
+
     /** The syntax family of [shell], a path or executable name such as `/bin/zsh` or `powershell.exe`. */
     fun shellFamily(shell: String): ShellFamily =
         when (File(shell.trim()).name.lowercase().removeSuffix(".exe")) {
@@ -107,10 +134,20 @@ internal object SidebarEnvInjection {
             else -> ShellFamily.UNSUPPORTED
         }
 
-    /** Why [env] cannot be injected, or null when every key is a valid variable name. */
+    /**
+     * Why [env] cannot be injected, or null when it can. Refused: a key that is not a variable
+     * name, and keys that differ only in case (`Path` and `PATH` are one variable on Windows, and
+     * which one wins is ambiguous everywhere). A refusal names keys, never values.
+     */
     fun validationError(env: Map<String, String>): String? {
         val bad = env.keys.filterNot { nameRule.matches(it) }
-        return if (bad.isEmpty()) null else "Invalid environment variable name(s): ${bad.joinToString()}"
+        if (bad.isNotEmpty()) return "Invalid environment variable name(s): ${bad.joinToString()}"
+        val clashes = env.keys.groupBy { it.uppercase() }.values.filter { it.size > 1 }
+        if (clashes.isNotEmpty()) {
+            return "Environment variable names that differ only in case: " +
+                clashes.joinToString("; ") { it.sorted().joinToString(", ") }
+        }
+        return null
     }
 
     /**
@@ -218,28 +255,50 @@ internal object SidebarEnvInjection {
      * and every failure throws into its catch) and deletes it at once. Then it sets the variables
      * and runs the command with `Invoke-Expression` (no script file, so no execution policy); a
      * `finally` puts every variable back as it was, including after a load that stopped partway.
-     * Loading has its own catch, so an error thrown by the command itself surfaces as usual rather
-     * than as the not-run message. The catches name only the exception type: a message could
-     * quote a value.
+     * A name is saved only the first time it is seen, in a table keyed the way the OS keys
+     * variables (case-insensitive on Windows, exact elsewhere): on Windows a second spelling of a
+     * name would otherwise save the value just set as the "original" ([validationError] also
+     * refuses such keys, so this is defence in depth).
+     *
+     * The loader is typed at the prompt, so it runs in the session's global scope, where `try` and
+     * `foreach` open no scope of their own. Its working variables (the decoded values among them)
+     * would outlive the command there, readable by a later `send_input`, so an outer `finally`
+     * removes every one of them on every path. Loading has its own catch, so an error thrown by the
+     * command itself surfaces as usual rather than as the not-run message. The catches name only
+     * the exception type: a message could quote a value.
      */
     private fun powershellLoader(file: File): String {
         val path = quotePowershell(file.path)
         val notRun = "Write-Host (${quotePowershell("$MISSING_ENV_MESSAGE (")} + \$_.Exception.GetType().Name + ')') -ForegroundColor Red"
         val decode = { expr: String -> "[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($expr))" }
-        return "\$__bossLines = \$null; try { \$__bossLines = [IO.File]::ReadAllLines($path); [IO.File]::Delete($path) } catch { $notRun }; " +
-            "if (\$null -ne \$__bossLines) { \$__bossSaved = @{}; \$__bossCommand = \$null; \$__bossLoaded = \$false; try { " +
+        val working = POWERSHELL_WORKING_VARIABLES.joinToString(",")
+        return "try { \$__bossLines = \$null; " +
+            "try { \$__bossLines = [IO.File]::ReadAllLines($path); [IO.File]::Delete($path) } catch { $notRun }; " +
+            "if (\$null -ne \$__bossLines) { " +
+            // Keyed like the OS keys variables: case-insensitive on Windows, exact elsewhere.
+            "\$__bossSaved = New-Object System.Collections.Hashtable (" +
+            "\$(if ([Environment]::OSVersion.Platform -eq 'Win32NT') { [StringComparer]::OrdinalIgnoreCase } else { [StringComparer]::Ordinal })); " +
+            "\$__bossCommand = \$null; \$__bossLoaded = \$false; try { " +
             "try { foreach (\$__bossLine in \$__bossLines) { " +
             "if (\$__bossLine.Length -eq 0) { continue }; " +
             "if (\$__bossLine.StartsWith(':')) { \$__bossCommand = ${decode("\$__bossLine.Substring(1)")}; continue }; " +
             "\$__bossAt = \$__bossLine.IndexOf('='); \$__bossName = \$__bossLine.Substring(0, \$__bossAt); " +
             "\$__bossValue = ${decode("\$__bossLine.Substring(\$__bossAt + 1)")}; " +
-            "\$__bossSaved[\$__bossName] = [Environment]::GetEnvironmentVariable(\$__bossName, 'Process'); " +
+            "if (-not \$__bossSaved.ContainsKey(\$__bossName)) { " +
+            "\$__bossSaved[\$__bossName] = [Environment]::GetEnvironmentVariable(\$__bossName, 'Process') }; " +
             "[Environment]::SetEnvironmentVariable(\$__bossName, \$__bossValue, 'Process') }; " +
             "\$__bossLoaded = \$true } catch { $notRun }; " +
             "if (\$__bossLoaded -and \$null -ne \$__bossCommand) { Invoke-Expression \$__bossCommand } " +
-            "} finally { foreach (\$__bossName in \$__bossSaved.Keys) { " +
-            "[Environment]::SetEnvironmentVariable(\$__bossName, \$__bossSaved[\$__bossName], 'Process') } } }"
+            "} finally { foreach (\$__bossName in @(\$__bossSaved.Keys)) { " +
+            "[Environment]::SetEnvironmentVariable(\$__bossName, \$__bossSaved[\$__bossName], 'Process') } } } " +
+            "} finally { Remove-Variable -Name $working -ErrorAction SilentlyContinue }"
     }
+
+    /** Every variable [powershellLoader] creates in the session, so its outer `finally` can remove them all. */
+    internal val POWERSHELL_WORKING_VARIABLES: List<String> = listOf(
+        "__bossLines", "__bossLine", "__bossValue", "__bossName", "__bossAt",
+        "__bossSaved", "__bossCommand", "__bossLoaded",
+    )
 
     /**
      * Delete env files in [dir]: all of them when [olderThanMs] is null, otherwise those last

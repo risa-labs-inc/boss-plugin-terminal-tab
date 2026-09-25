@@ -59,12 +59,58 @@ class SidebarEnvCleanupTest {
     private fun envFiles(): List<File> =
         base.walkTopDown().filter { it.isFile && it.name.startsWith("env-") }.toList()
 
-    private fun runInSidebar(): CallToolResult = runBlocking {
+    private fun runInSidebar(env: Map<String, String> = mapOf("TOKEN" to secretValue)): CallToolResult = runBlocking {
         val args: JsonObject = buildJsonObject {
             put("command", "echo \"\$TOKEN\"")
-            putJsonObject("env") { put("TOKEN", secretValue) }
+            putJsonObject("env") { env.forEach { (k, v) -> put(k, v) } }
         }
         bossHostMcpToolDefs.single { it.name == "run_in_sidebar" }.handler(args)
+    }
+
+    private fun CallToolResult.text() = content.filterIsInstance<TextContent>().joinToString { it.text }
+
+    @Test
+    fun `an unresolved secret reference is refused before anything is written or run`() {
+        sidebarTabStarter = { _, command, _, _, _ ->
+            startedCommand = command
+            true
+        }
+
+        val result = runInSidebar(mapOf("TOKEN" to "{{secret:abc-123}}", "OTHER" to "plain"))
+
+        assertEquals(true, result.isError)
+        assertTrue(result.text().contains("TOKEN") && result.text().contains("Nothing was run"), result.text())
+        assertFalse(result.text().contains("abc-123"), "names only: ${result.text()}")
+        assertEquals(null, startedCommand, "the literal reference must not reach the shell")
+        assertEquals(emptyList(), envFiles())
+    }
+
+    @Test
+    fun `sensitive names are called out in the result, values never`() {
+        sidebarTabStarter = { _, _, _, _, _ -> true }
+
+        val result = runInSidebar(mapOf("LD_PRELOAD" to secretValue, "TOKEN" to secretValue))
+
+        assertEquals(false, result.isError, result.text())
+        assertTrue(result.text().contains("\"sensitiveEnvKeys\":[\"LD_PRELOAD\"]"), result.text())
+        assertFalse(result.text().contains(secretValue), result.text())
+    }
+
+    @Test
+    fun `a failure preparing the file reports its type, not its message`() {
+        val blocker = File(base, "not-a-directory").apply { writeText("x") }
+        SidebarEnvInjection.envBaseProvider = { blocker }
+        sidebarTabStarter = { _, command, _, _, _ ->
+            startedCommand = command
+            true
+        }
+
+        val result = runInSidebar()
+
+        assertEquals(true, result.isError)
+        assertTrue(result.text().contains("Exception") && result.text().contains("Nothing was run"), result.text())
+        assertFalse(result.text().contains(blocker.path), "an exception message is not echoed: ${result.text()}")
+        assertEquals(null, startedCommand)
     }
 
     @Test
