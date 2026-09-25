@@ -45,6 +45,13 @@ jobs:
             "https://github.com/risa-labs-inc/boss-plugin-api/releases/download/v${API_VERSION}/boss-plugin-api-${API_VERSION}.jar"
           ls -l build/downloaded-deps/
 
+      # fish, so SidebarEnvInjectionTest runs run_in_sidebar's env loader under a
+      # real fish as well as sh, bash and zsh: fish quotes differently, and a
+      # fish-only break would otherwise ship untested. pwsh is preinstalled.
+      - name: Install fish and zsh
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq fish zsh
+
       # CI=true switches build.gradle.kts off the sibling-checkout jar and onto
       # the one downloaded above. Actions sets it anyway; set explicitly so the
       # dependency is visible rather than inherited.

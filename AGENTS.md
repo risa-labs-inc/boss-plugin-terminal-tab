@@ -73,23 +73,36 @@ its own policy and never reaches the registry.
 
 ### `run_in_sidebar` takes an `env` object
 
-Environment variables for the command, as NAME to value. The values never go on the command line:
-`SidebarEnvInjection` writes them to an owner-only file under `~/.boss/run/env/<pid>/` (the file
-0600 from creation, the directories 0700), the shell loads and deletes it, and only then runs the
-command. The scrollback and the runner entry carry the file's path, the tool's result the caller's
-command and the variable NAMES; never a value.
+Environment variables for the command, as NAME to value. Neither the values nor the command go on
+the command line: `SidebarEnvInjection` writes both to an owner-only file under
+`~/.boss/run/env/<pid>/` (the file 0600 from creation, the directories 0700), and the sidebar is
+sent a short, fixed loader line naming that file. The file deletes itself, sets the variables for
+the command alone, and runs it. The scrollback and the runner entry carry the loader (a path,
+never a value); the tool's result carries the caller's command and the variable NAMES.
 
-- POSIX shells (bash, zsh, fish): `. '<file>' && rm -f '<file>' && eval '<command>'`. `eval` keeps a
-  compound command (`a; b`) wholly behind the `&&`.
-- Windows PowerShell: the file is data (`NAME=<base64 of the value>`), read with plain .NET calls (`[IO.File]::ReadAllLines`, `[Environment]::SetEnvironmentVariable`), not
-  a dot-sourced script. So the execution policy cannot block it (`Restricted` is the default on
-  Windows client editions), and no value is ever parsed, so no quote character, including the
-  curly quotes PowerShell also treats as quotes, can break out. The command runs only when loading
-  succeeded (`if ($__bossEnvOk) { ... }`; Windows PowerShell 5.1 has no `&&`).
+Why the command is in the file: a line typed into the terminal before the shell's line editor takes
+over is capped at 1024 bytes on macOS, so a long command typed with its wrapper was cut off and
+never ran. The loader is a few hundred characters whatever the command.
 
-Either way, a command whose file cannot be loaded prints why and does not run. That covers a re-run
-from the top-bar runner, whose entry holds the wrapped command and whose file is gone after the
-first run: run it again through the agent.
+The file is written in the sidebar shell's own language, detected from BossTerm's default shell
+(`$SHELL` on Unix, the PowerShell/cmd setting on Windows):
+
+- bash, zsh, sh: the command runs in a subshell that alone has the variables, so none of them
+  outlives it in the sidebar shell (a later command, or an agent's `send_input`, cannot read them
+  without a new approval). Trade-off: a `cd` or `export` inside the command does not carry over.
+- fish: a `begin ... end` block with `set -lx` (variables local to the block), quoted for fish,
+  where `\\` and `\'` are escapes inside single quotes. A `cd` does carry over.
+- PowerShell: the file is data (`NAME=<base64>` lines and one `:<base64 of the command>` line), read
+  with plain .NET calls, never dot-sourced, so the execution policy cannot block it (`Restricted`
+  is the default on Windows client editions) and no value reaches the parser. The command runs with
+  `Invoke-Expression`, and a `finally` restores every variable afterwards.
+- Any other shell (cmd.exe, nushell, csh): `env` is refused with a clear error and nothing is
+  written or run. A command without `env` runs in any shell as before.
+
+A loader whose file cannot be loaded prints why and runs nothing. That covers a re-run from the
+top-bar runner, whose entry holds the loader and whose file is gone after the first run: run it
+again through the agent. The command's own exit status comes through. The result is `isError` when
+nothing was started.
 
 A value may be a `{{secret:<id>}}` reference, which the host resolves after the operator approves;
 that is how a credential reaches a shell command without the agent ever holding it. That needs a
@@ -98,14 +111,14 @@ reaches the shell.
 
 No path leaves a file behind: it is deleted when the sidebar start throws or queues nothing, each
 new write removes this process's env files older than 10 minutes (a command swallowed by a busy
-terminal), and plugin start and stop remove this process's files and those of any process that is
-no longer running. A live other BOSS process sharing the data root (a second launch, a restart
-while the old JVM exits) keeps its own directory, so a sweep never takes a file its shell still
-needs. `SidebarEnvInjectionTest` runs the wrapper under every shell present, PowerShell included
-under the `Restricted` policy (Windows PowerShell 5.1 on the Windows CI job, pwsh on Linux).
+terminal), and plugin start and stop remove this process's files, those of any process that is no
+longer running, and stale ones of a live pid (a dead BOSS whose pid was reused). A live other BOSS
+process sharing the data root keeps its fresh files, so a sweep never takes one its shell still
+needs. `SidebarEnvInjectionTest` runs the real loader under every shell present; CI installs fish
+and zsh on Linux and fails if any supported shell is missing there.
 
-Not a secure enclave: the shell and every process it starts have the value, and `printenv`
-prints it. The clean long-term shape is an `environment` parameter on BossTerm's tab creation,
+Not a secure enclave: the command and every process it starts have the value, and `printenv`
+inside it prints it. The clean long-term shape is an `environment` parameter on BossTerm's tab creation,
 which builds the PTY environment at spawn; that needs a BossTerm change and is the follow-up.
 
 ## Version Management

@@ -65,8 +65,7 @@ internal class HostMcpToolProvider(
                 try {
                     json.parseToJsonElement(raw) as? JsonObject
                 } catch (_: IllegalArgumentException) {
-                    null
-                } catch (_: kotlinx.serialization.SerializationException) {
+                    // Also covers kotlinx.serialization.SerializationException, a subclass.
                     null
                 }
             if (parsed == null) {

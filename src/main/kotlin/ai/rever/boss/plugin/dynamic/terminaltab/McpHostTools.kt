@@ -344,6 +344,17 @@ private suspend fun runInSidebar(args: JsonObject): CallToolResult {
     val isRerun = args.bool("is_rerun") ?: false
     val env = args.envMap("env") ?: return errorResult("env must be an object of string values")
     SidebarEnvInjection.validationError(env)?.let { return errorResult(it) }
+    // The env file is written in the sidebar shell's own language; for a shell without a format
+    // (cmd.exe, nushell, csh...), refuse before anything is written rather than send it a line
+    // it cannot parse. A command without env runs in any shell, as before.
+    val shell = if (env.isEmpty()) null else SidebarEnvInjection.sidebarShellProvider()
+    val family = shell?.let(SidebarEnvInjection::shellFamily)
+    if (family == SidebarEnvInjection.ShellFamily.UNSUPPORTED) {
+        return errorResult(
+            "env is not supported for the sidebar shell ${java.io.File(shell).name}; it needs bash, zsh, sh, fish or " +
+                "PowerShell. Nothing was run.",
+        )
+    }
 
     // Stable id used as BOTH the sidebar tab id and the runner config id, so the
     // top-bar runner's running-state and the tab's close-cleanup line up. When the
@@ -357,18 +368,20 @@ private suspend fun runInSidebar(args: JsonObject): CallToolResult {
     val windowId = sidebarWindowLookup()
         ?: return errorResult("No focused BossConsole window; focus a window and retry.")
 
-    // The command the SHELL runs. With env, the values go to an owner-only file that the shell
-    // loads and removes before running the command (see SidebarEnvInjection). The command line
-    // and the runner entry carry that wrapped command (a path, never a value); the result below
-    // carries the caller's own command and the variable names.
+    // The line the SHELL is sent. With env, the values and the command go to an owner-only file,
+    // and the shell gets a short loader naming it (see SidebarEnvInjection): a fixed length
+    // whatever the command, so a long one is not cut off by the terminal's input limit. The
+    // command line and the runner entry carry the loader (a path, never a value); the result
+    // below carries the caller's own command and the variable names.
     var envFile: java.io.File? = null
     val shellCommand =
-        if (env.isEmpty()) {
+        if (family == null) {
             command
         } else {
             try {
-                val file = SidebarEnvInjection.writeEnvFile(env, SidebarEnvInjection.envDir()).also { envFile = it }
-                SidebarEnvInjection.wrapCommand(command, file)
+                val file = SidebarEnvInjection.writeEnvFile(env, command, SidebarEnvInjection.envDir(), family)
+                    .also { envFile = it }
+                SidebarEnvInjection.loaderCommand(file, family)
             } catch (t: Throwable) {
                 envFile?.delete()
                 hostToolsLogger.warn(LogCategory.TERMINAL, "run_in_sidebar: could not write env file", error = t)
@@ -397,12 +410,14 @@ private suspend fun runInSidebar(args: JsonObject): CallToolResult {
     // Register the run with the host runner so the top-bar runner reflects it
     // (selects the config + shows running/Stop). Best-effort; the command still
     // runs even if the host class isn't reachable.
-    // The runner entry gets the wrapped command, not the bare one. Its env file is gone after the
-    // first run, so a re-run from the top-bar runner prints why and does not run, instead of
-    // silently running the command without its variables. Values are never in it.
+    // The runner entry gets the loader, not the bare command. Its file is gone after the first run,
+    // so a re-run from the top-bar runner prints why and runs nothing, instead of silently running
+    // the command without its variables. Values are never in it.
     val runnerUpdated = sidebarRunnerRegistrar(windowId, configId, shellCommand, workingDir, runName)
 
-    return jsonResult(isError = false) {
+    // isError when nothing was started, so an agent that just got approval does not read a
+    // queued-nothing result as the command having run.
+    return jsonResult(isError = !started) {
         put("ok", started)
         put("windowId", windowId)
         // The caller's command, not the shell command: the env file path is an implementation

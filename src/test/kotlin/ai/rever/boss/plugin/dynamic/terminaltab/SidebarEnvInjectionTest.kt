@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin.dynamic.terminaltab
 
+import ai.rever.boss.plugin.dynamic.terminaltab.SidebarEnvInjection.ShellFamily
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermission
@@ -13,23 +14,23 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * The env file is owner-only from the moment it exists and holds exactly the pairs it was given;
- * the shell reads them back verbatim, the command that reaches the shell names the file and never
- * a value, and a command whose file cannot be loaded does not run. The shell tests run the real
- * wrapper under every shell present on the machine, PowerShell included when it is installed
- * (Windows PowerShell 5.1 on the Windows CI job, pwsh on Linux).
+ * The command file is owner-only from the moment it exists and holds exactly the variables and
+ * command it was given. The shell reads the values back verbatim, the variables do not outlive the
+ * command, the loader line names the file and never a value or the command, and a loader whose
+ * file cannot be loaded runs nothing. The shell tests run the real loader under every shell on the
+ * machine, fish and PowerShell included when installed (Windows PowerShell 5.1 on the Windows CI
+ * job, pwsh on Linux).
  */
 class SidebarEnvInjectionTest {
-    private val secret = "hunter2!\"quoted\" 'single' \$dollar `tick` & spaced/\\slashed"
-
-    /** Characters that would break or escape PowerShell quoting if a value were ever parsed. */
-    private val hostile = "a\u2019b \u2018c\u201Ad\u201Be ' \$(Write-Output PWNED) `\"x`\" ; exit 3"
+    /** Every character that breaks some shell's quoting: POSIX, fish (`\\`, `\'`, trailing `\`) and PowerShell (curly quotes). */
+    private val hostile = "a'b\"c \$HOME `tick` \$(echo PWNED) \\\\double \\back\nline2 \u2019curly\u2018 end\\"
 
     private fun tempDir(): File = createTempDirectory("env-injection").toFile()
 
-    private val posixShells: List<String> =
-        listOf("/bin/sh", "/bin/bash", "/bin/zsh", "/usr/bin/zsh", "/usr/bin/fish", "/opt/homebrew/bin/fish", "/usr/local/bin/fish")
-            .filter { File(it).canExecute() }
+    private fun installed(vararg paths: String) = paths.filter { File(it).canExecute() }
+
+    private val posixShells = installed("/bin/sh", "/bin/bash", "/bin/zsh", "/usr/bin/zsh")
+    private val fishShells = installed("/usr/bin/fish", "/opt/homebrew/bin/fish", "/usr/local/bin/fish")
 
     private val powershell: String? =
         listOf("powershell.exe", "pwsh").firstOrNull { exe ->
@@ -42,6 +43,36 @@ class SidebarEnvInjectionTest {
         return process.waitFor() to output
     }
 
+    /** (shell path, family) for every Unix shell present. */
+    private fun unixShells(): List<Pair<String, ShellFamily>> =
+        posixShells.map { it to ShellFamily.POSIX } + fishShells.map { it to ShellFamily.FISH }
+
+    /** Prints whether TOKEN is still set, after the loader, in [family]'s syntax. */
+    private fun afterCheck(family: ShellFamily): String =
+        if (family == ShellFamily.FISH) {
+            "set -q TOKEN; and echo AFTER=set; or echo AFTER=unset"
+        } else {
+            "if [ -n \"\${TOKEN+x}\" ]; then echo AFTER=set; else echo AFTER=unset; fi"
+        }
+
+    /**
+     * The shell tests skip a shell that is not installed, so a green run proves nothing about a
+     * missing one. On CI the runners are set up to have them (test.yml installs fish and zsh on
+     * Linux; pwsh is preinstalled there, Windows PowerShell on Windows), so a runner that lost one
+     * fails here instead of passing silently.
+     */
+    @Test
+    fun `on CI every shell the loader supports is actually exercised`() {
+        if (System.getenv("CI") != "true") return
+        val os = System.getProperty("os.name").orEmpty().lowercase()
+        if (os.contains("linux")) {
+            assertTrue(fishShells.isNotEmpty(), "fish is missing on the Linux runner")
+            assertTrue(posixShells.any { it.endsWith("zsh") }, "zsh is missing on the Linux runner")
+            assertNotNull(powershell, "pwsh is missing on the Linux runner")
+        }
+        if (os.contains("windows")) assertNotNull(powershell, "PowerShell is missing on the Windows runner")
+    }
+
     @Test
     fun `variable names are validated before anything is written`() {
         assertNull(SidebarEnvInjection.validationError(mapOf("TOKEN" to "x", "_x9" to "y")))
@@ -52,13 +83,26 @@ class SidebarEnvInjectionTest {
     }
 
     @Test
+    fun `the shell family comes from the shell's name`() {
+        assertEquals(ShellFamily.POSIX, SidebarEnvInjection.shellFamily("/bin/zsh"))
+        assertEquals(ShellFamily.POSIX, SidebarEnvInjection.shellFamily("/usr/local/bin/bash"))
+        assertEquals(ShellFamily.POSIX, SidebarEnvInjection.shellFamily("/bin/sh"))
+        assertEquals(ShellFamily.FISH, SidebarEnvInjection.shellFamily("/opt/homebrew/bin/fish"))
+        assertEquals(ShellFamily.POWERSHELL, SidebarEnvInjection.shellFamily("powershell.exe"))
+        assertEquals(ShellFamily.POWERSHELL, SidebarEnvInjection.shellFamily("pwsh"))
+        assertEquals(ShellFamily.UNSUPPORTED, SidebarEnvInjection.shellFamily("cmd.exe"))
+        assertEquals(ShellFamily.UNSUPPORTED, SidebarEnvInjection.shellFamily("/usr/bin/nu"))
+        assertEquals(ShellFamily.UNSUPPORTED, SidebarEnvInjection.shellFamily("/bin/tcsh"))
+    }
+
+    @Test
     fun `the file and its directories are owner-only on a posix filesystem`() {
         val base = tempDir()
         val dir = File(base, "12345")
         val productionBase = SidebarEnvInjection.envBaseProvider
         SidebarEnvInjection.envBaseProvider = { base }
         val file = try {
-            SidebarEnvInjection.writeEnvFile(mapOf("TOKEN" to secret), dir, windows = false)
+            SidebarEnvInjection.writeEnvFile(mapOf("TOKEN" to hostile), "true", dir, ShellFamily.POSIX)
         } finally {
             SidebarEnvInjection.envBaseProvider = productionBase
         }
@@ -77,71 +121,97 @@ class SidebarEnvInjectionTest {
     }
 
     @Test
-    fun `every posix shell reads the value back verbatim and the file is gone before the command`() {
-        for (shell in posixShells) {
+    fun `every unix shell gets the value verbatim, for the command alone, from a removed file`() {
+        for ((shell, family) in unixShells()) {
             val dir = tempDir()
-            val file = SidebarEnvInjection.writeEnvFile(mapOf("TOKEN" to secret, "USER_NAME" to "deploy-bot"), dir, windows = false)
-            val probe = File(dir, "probe.sh").apply { writeText("[ -e \"\$1\" ] && echo STILL_THERE; printf '%s' \"\$TOKEN\"\n") }
-            val wrapped = SidebarEnvInjection.wrapCommand("sh '${probe.path}' '${file.path}'", file, windows = false)
+            val out = File(dir, "out.txt")
+            // A pipeline, so it reads the same in sh, bash, zsh and fish.
+            val command = "ls '${dir.path}' | grep -q '^env-' && echo STILL_THERE; printf '%s' \"\$TOKEN\" > '${out.path}'"
+            val file = SidebarEnvInjection.writeEnvFile(mapOf("TOKEN" to hostile), command, dir, family)
+            val loader = SidebarEnvInjection.loaderCommand(file, family)
 
-            val (exit, output) = run(shell, "-c", wrapped)
+            val (exit, output) = run(shell, "-c", "$loader; ${afterCheck(family)}")
 
             assertEquals(0, exit, "$shell: $output")
-            assertEquals(secret, output, "$shell read the value back differently")
+            assertEquals(hostile, out.readText(), "$shell read the value back differently")
             assertFalse(file.exists(), "$shell: the file is removed")
+            assertFalse("STILL_THERE" in output, "$shell: the file was still there while the command ran")
+            // The variables must not outlive the approved command in the sidebar shell.
+            assertTrue("AFTER=unset" in output, "$shell: TOKEN is still set after the command: $output")
+            assertFalse("PWNED" in output, "$shell: part of the value ran as code: $output")
         }
     }
 
     @Test
-    fun `with its file gone a command does not run, compound commands included`() {
-        for (shell in posixShells) {
-            val missing = File(tempDir(), "env-gone.sh")
-            // Typed bare, `. f && rm -f f && echo FIRST; echo SECOND` would still print SECOND.
-            val wrapped = SidebarEnvInjection.wrapCommand("echo FIRST; echo SECOND", missing, windows = false)
+    fun `a long command runs through a fixed-length loader that names only the file`() {
+        val steps = (1..400).joinToString(" && ") { "echo step-$it" }
+        assertTrue(steps.length > 4_000, "the command must be well past the 1024-byte terminal input limit")
+        for ((shell, family) in unixShells()) {
+            val file = SidebarEnvInjection.writeEnvFile(mapOf("TOKEN" to "t"), steps, tempDir(), family)
+            val loader = SidebarEnvInjection.loaderCommand(file, family)
 
-            val (exit, output) = run(shell, "-c", wrapped)
+            assertTrue(loader.length < 600, "$shell: loader is ${loader.length} chars: $loader")
+            assertFalse("step-1" in loader, "the command belongs in the file, not the typed line: $loader")
+
+            val (exit, output) = run(shell, "-c", loader)
+            assertEquals(0, exit, "$shell: $output")
+            assertEquals((1..400).map { "step-$it" }, output.trim().lines(), shell)
+        }
+    }
+
+    @Test
+    fun `the command's exit status comes through, and a compound command runs whole`() {
+        for ((shell, family) in unixShells()) {
+            val file = SidebarEnvInjection.writeEnvFile(mapOf("TOKEN" to "t"), "echo FIRST; echo SECOND; exit 7", tempDir(), family)
+
+            val (exit, output) = run(shell, "-c", SidebarEnvInjection.loaderCommand(file, family))
+
+            assertEquals(7, exit, "$shell: $output")
+            assertEquals(listOf("FIRST", "SECOND"), output.trim().lines(), shell)
+        }
+    }
+
+    @Test
+    fun `with its file gone a loader runs nothing and says why`() {
+        for ((shell, family) in unixShells()) {
+            val missing = File(tempDir(), "env-gone.sh")
+
+            val (exit, output) = run(shell, "-c", SidebarEnvInjection.loaderCommand(missing, family))
 
             assertTrue(exit != 0, "$shell: a command without its environment must fail: $output")
-            assertFalse("FIRST" in output || "SECOND" in output, "$shell ran part of the command: $output")
             assertTrue(SidebarEnvInjection.MISSING_ENV_MESSAGE in output, "$shell should say why: $output")
         }
     }
 
     @Test
-    fun `a compound command runs whole once its file loads`() {
-        for (shell in posixShells) {
-            val file = SidebarEnvInjection.writeEnvFile(mapOf("TOKEN" to "t"), tempDir(), windows = false)
-            val wrapped = SidebarEnvInjection.wrapCommand("echo \"FIRST\$TOKEN\"; echo SECOND", file, windows = false)
-
-            val (exit, output) = run(shell, "-c", wrapped)
-
-            assertEquals(0, exit, "$shell: $output")
-            assertEquals(listOf("FIRSTt", "SECOND"), output.trim().lines(), shell)
+    fun `the posix and fish loaders carry the path and nothing else`() {
+        val file = File("/home/user/.boss/run/env/1/env-123.sh")
+        val path = file.path // on Windows the JVM renders this with backslashes
+        for (family in listOf(ShellFamily.POSIX, ShellFamily.FISH)) {
+            val loader = SidebarEnvInjection.loaderCommand(file, family)
+            val quoted = if (family == ShellFamily.FISH) SidebarEnvInjection.quoteFish(path) else SidebarEnvInjection.quotePosix(path)
+            assertTrue(loader.endsWith(if (family == ShellFamily.FISH) "&& source $quoted" else "&& . $quoted"), loader)
         }
     }
 
     @Test
-    fun `the posix wrapper carries the file path and never a value`() {
-        val file = File("/home/user/.boss/run/env/1/env-123.sh")
-        // file.path, not the literal: on Windows the JVM renders this path with backslashes.
-        val path = file.path
-        val wrapped = SidebarEnvInjection.wrapCommand("curl -H \"Authorization: Bearer \$TOKEN\" https://x", file, windows = false)
-        assertTrue(wrapped.contains(". '$path' && rm -f '$path' && eval "), wrapped)
-        assertTrue(wrapped.endsWith("eval 'curl -H \"Authorization: Bearer \$TOKEN\" https://x'"), wrapped)
+    fun `fish quoting escapes backslashes and quotes, posix quoting leaves backslashes alone`() {
+        assertEquals("'a\\\\b\\'c\\\\'", SidebarEnvInjection.quoteFish("a\\b'c\\"))
+        assertEquals("'a\\b'\\''c\\'", SidebarEnvInjection.quotePosix("a\\b'c\\"))
     }
 
     @Test
-    fun `the powershell file is data, and no value reaches the parser`() {
-        val data = SidebarEnvInjection.powershellData(mapOf("TOKEN" to hostile, "EMPTY" to ""))
-        assertEquals(
-            "TOKEN=" + Base64.getEncoder().encodeToString(hostile.toByteArray(Charsets.UTF_8)) + "\nEMPTY=\n",
-            data,
-        )
+    fun `the powershell file is data, and neither a value nor the command reaches the parser`() {
+        val command = "Write-Output 'hi'"
+        val data = SidebarEnvInjection.powershellData(mapOf("TOKEN" to hostile, "EMPTY" to ""), command)
+        val b64 = { s: String -> Base64.getEncoder().encodeToString(s.toByteArray(Charsets.UTF_8)) }
+        assertEquals("TOKEN=${b64(hostile)}\nEMPTY=\n:${b64(command)}\n", data)
         val file = File("C:\\Users\\me\\.boss\\run\\env\\1\\env-1.env")
-        val wrapped = SidebarEnvInjection.wrapCommand("dir", file, windows = true)
-        assertFalse(wrapped.contains(". '"), "the file must never be dot-sourced as a script: $wrapped")
-        assertTrue(wrapped.contains("[IO.File]::ReadAllLines('${file.path}')"), wrapped)
-        assertTrue(wrapped.endsWith("if (\$__bossEnvOk) { dir }"), wrapped)
+        val loader = SidebarEnvInjection.loaderCommand(file, ShellFamily.POWERSHELL)
+        assertFalse(loader.contains(". '"), "the file must never be dot-sourced as a script: $loader")
+        assertFalse(loader.contains("Write-Output 'hi'"), "the command belongs in the file: $loader")
+        assertTrue(loader.contains("[IO.File]::ReadAllLines('${file.path}')"), loader)
+        assertTrue(loader.contains("Invoke-Expression"), loader)
     }
 
     @Test
@@ -151,44 +221,48 @@ class SidebarEnvInjectionTest {
     }
 
     @Test
-    fun `real powershell loads a hostile value verbatim under the Restricted policy`() {
+    fun `real powershell runs the command with a hostile value, then restores the variables`() {
         val exe = powershell ?: return
-        val dir = tempDir()
-        val file = SidebarEnvInjection.writeEnvFile(mapOf("TOKEN" to hostile, "EMPTY" to ""), dir, windows = true)
-        // Restricted blocks running any .ps1, which is what broke dot-sourcing the old script.
         // The value comes back as base64 of its UTF-8 bytes: Windows PowerShell 5.1 writes the
-        // console in the OEM code page, which would mangle the curly quotes on the way out even
-        // when the variable itself is exact. ASCII out, byte-exact comparison here.
-        val wrapped = SidebarEnvInjection.wrapCommand(
-            "Write-Output ('B64=' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(\$env:TOKEN)))",
-            file,
-            windows = true,
-        )
+        // console in the OEM code page, which would mangle the curly quotes on the way out.
+        val command = "Write-Output ('B64=' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(\$env:TOKEN)))"
+        val file = SidebarEnvInjection.writeEnvFile(mapOf("TOKEN" to hostile, "KEEP" to "new"), command, tempDir(), ShellFamily.POWERSHELL)
+        val loader = SidebarEnvInjection.loaderCommand(file, ShellFamily.POWERSHELL)
+        // Restricted blocks every .ps1, which is what broke dot-sourcing an env script.
+        val script = "\$env:KEEP = 'old'; $loader; Write-Output ('AFTER_TOKEN=[' + \$env:TOKEN + ']'); Write-Output ('AFTER_KEEP=' + \$env:KEEP)"
 
-        val (exit, output) = run(exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Restricted", "-Command", wrapped)
+        val (exit, output) = run(exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Restricted", "-Command", script)
 
-        assertEquals(0, exit, "a `; exit 3` in the value must not run: $output")
+        assertEquals(0, exit, output)
         assertFalse("PWNED" in output, "part of the value ran as code: $output")
         val encoded = assertNotNull(Regex("B64=([A-Za-z0-9+/=]*)").find(output), output).groupValues[1]
         assertEquals(hostile, String(Base64.getDecoder().decode(encoded), Charsets.UTF_8), "the value was altered: $output")
+        assertTrue("AFTER_TOKEN=[]" in output, "TOKEN outlived the command: $output")
+        assertTrue("AFTER_KEEP=old" in output, "a variable set before must be put back: $output")
         assertFalse(file.exists(), "the file is removed")
     }
 
     @Test
-    fun `real powershell does not run a command whose file is gone`() {
+    fun `real powershell reports the command's own error as itself, not as not-run`() {
         val exe = powershell ?: return
-        val missing = File(tempDir(), "env-gone.env")
-        val wrapped = SidebarEnvInjection.wrapCommand("Write-Output FIRST; Write-Output SECOND", missing, windows = true)
+        val file = SidebarEnvInjection.writeEnvFile(mapOf("TOKEN" to "t"), "throw 'COMMAND_FAILED'", tempDir(), ShellFamily.POWERSHELL)
 
-        val (_, output) = run(exe, "-NoProfile", "-NonInteractive", "-Command", wrapped)
+        val (_, output) = run(exe, "-NoProfile", "-NonInteractive", "-Command", SidebarEnvInjection.loaderCommand(file, ShellFamily.POWERSHELL))
 
-        assertFalse("FIRST" in output || "SECOND" in output, "ran without its environment: $output")
-        assertTrue(SidebarEnvInjection.MISSING_ENV_MESSAGE in output.replace(Regex("\\s+"), " "), "should say why: $output")
+        assertTrue("COMMAND_FAILED" in output, output)
+        assertFalse(
+            SidebarEnvInjection.MISSING_ENV_MESSAGE in output.replace(Regex("\\s+"), " "),
+            "a failing command is not a missing file: $output",
+        )
     }
 
     @Test
-    fun `a value with a newline survives single quoting`() {
-        val script = SidebarEnvInjection.posixScript(mapOf("PEM" to "line1\nline2"))
-        assertEquals("export PEM='line1\nline2'\n", script)
+    fun `real powershell runs nothing when the file is gone`() {
+        val exe = powershell ?: return
+        val missing = File(tempDir(), "env-gone.env")
+
+        val (_, output) = run(exe, "-NoProfile", "-NonInteractive", "-Command", SidebarEnvInjection.loaderCommand(missing, ShellFamily.POWERSHELL))
+
+        assertTrue(SidebarEnvInjection.MISSING_ENV_MESSAGE in output.replace(Regex("\\s+"), " "), "should say why: $output")
     }
 }
