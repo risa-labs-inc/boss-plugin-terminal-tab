@@ -14,7 +14,7 @@ A dynamic plugin that provides terminal tabs in the main panel area of BOSS Cons
 ## Requirements
 
 - A BOSS Console host shipping Plugin API 1.0.89 or later
-  (`minBossVersion` requires BOSS Console 9.5.26 or later).
+  (`minBossVersion` requires BOSS Console 9.5.20 or later).
 
 ## Installation
 
@@ -45,7 +45,7 @@ minimum supported API, so using a newer symbol requires an explicit gate update.
 
 This gate protects hosts that report their installed API version. Hosts with an
 unknown API version fail open in both the updater and loader, so the manifest
-alone does not protect those hosts. `minBossVersion` is now 9.5.26 for the shared rendering runtime.
+alone does not protect those hosts. `minBossVersion` remains 9.5.20 so affected 9.5.25 hosts can receive the image hotfix.
 
 Publishing a manifest does not repair existing store records. Verify the API
 gate on previously published versions, including any version used as a fallback.
@@ -53,14 +53,10 @@ Store data must be verified separately from this repository's build.
 
 ## Shared rendering runtime
 
-BossConsole 9.5.26 or later must provide Compose, Skia and Skiko through its shared
-classloader. BossTerm decodes inline images into Skia objects consumed by host Compose;
-these classes and their native runtime must have one owner. `buildPluginJar` rejects
-bundled Compose/Skia/Skiko classes and Skiko native libraries.
-
-Release the host fix before this plugin. BossConsole 9.5.25 restricts host-class access
-without sharing Skia/Skiko, so inline image rendering can disable the terminal plugin.
-The minimum host version prevents offering this release to that affected host.
+The host owns Compose, Skia and Skiko. `buildPluginJar` rejects bundled
+Compose/Skia/Skiko classes and Skiko native libraries to prevent duplicate runtime
+ownership. The image-decoding compatibility path below works before the general
+host sharing fix, so this plugin release can ship independently of BossConsole 9.5.26.
 
 ## License
 

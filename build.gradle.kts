@@ -319,7 +319,7 @@ dependencies {
     // compileOnly, so nothing is added to the jar that is not already there.
     compileOnly("com.risaboss:bossterm-core-jvm:$bosstermVersion")
 
-    // Compose and its Skia/Skiko rendering runtime belong to BossConsole >= 9.5.26.
+    // Compose and its Skia/Skiko rendering runtime belong to BossConsole.
     // BossTerm passes Skia images into host Compose; bundling another copy breaks type identity.
     // Compose dependencies — compileOnly so we don't duplicate the host's
     // Compose runtime in the plugin JAR. The plugin's @Composable functions
