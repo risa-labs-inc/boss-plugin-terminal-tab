@@ -87,8 +87,9 @@ the host shared-rendering fix is still needed for other direct Skia/Skiko consum
 `FontUtils` discovers and categorizes system fonts using AWT and passes their names
 into Compose's `SystemFont`; Compose owns the corresponding rendering typefaces.
 Bundled font extraction, the default font, missing-font fallback, and optional emoji
-and math families retain their existing behavior. The desktop inventory can differ
-from Skia's inventory (for example, Java logical font families may appear).
+and math families retain their existing behavior. Java logical font names are excluded because
+Skia cannot resolve them as physical families. A saved logical name falls back to
+the bundled font. Newly installed fonts appear after restarting BOSS.
 `CurrentHostFontUtilsTest` loads the shipped override with direct Skia/Skiko access
 blocked, enumerates settings fonts and resolves selected, bundled, fallback, and
 available emoji/math families through host Compose.
@@ -103,6 +104,9 @@ Remaining direct references in bundled BossTerm 1.2.167:
   Windows auxiliary glass can encounter blocked Skiko access; BossTerm already
   catches linkage failures and uses opaque surfaces. Neither platform path is
   overridden here; the host shared-rendering fix restores them.
+
+The automatic dependency updater pauses while the source-override version guard
+is present, preventing it from auto-merging an incompatible bump.
 
 Remove both pinned source overrides when the corrected BossTerm library is released
 and the dependency is upgraded. Do not bundle a second Skia/Skiko runtime.
