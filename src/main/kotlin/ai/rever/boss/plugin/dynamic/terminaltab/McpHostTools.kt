@@ -6,6 +6,7 @@ import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import io.modelcontextprotocol.kotlin.sdk.types.ToolSchema
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.JsonObject
@@ -119,8 +120,22 @@ internal val setupTerminalMcpToolDefs: List<HostMcpTool> = listOf(
  * the tools surface client-side as `mcp__boss__run_in_sidebar` / `mcp__boss__cli`
  * (names in `additionalTools` are NOT prefixed; the server is keyed `boss`).
  */
-internal val bossHostMcpTools: (Server) -> Unit = { server ->
-    for (tool in bossHostMcpToolDefs + setupTerminalMcpToolDefs) {
+internal val bossHostMcpTools: (Server) -> Unit = { server -> registerHostToolsOnServer(server, viaRegistry = false) }
+
+/**
+ * The host tools this plugin puts straight onto the MCP server.
+ *
+ * When [HostMcpToolProvider] carries `run_in_sidebar` and `cli` through the host registry, the
+ * setup-terminal tools still go here. They are reachable only with the exact request token of an
+ * accepted Fluck handoff, so the registry's per-call approval would add a prompt to every
+ * keystroke Fluck sends during setup repair; and the provider does not carry them, so skipping
+ * them here would leave Debug with Fluck with no tools at all.
+ */
+internal fun serverRegisteredHostTools(viaRegistry: Boolean): List<HostMcpTool> =
+    if (viaRegistry) setupTerminalMcpToolDefs else bossHostMcpToolDefs + setupTerminalMcpToolDefs
+
+internal fun registerHostToolsOnServer(server: Server, viaRegistry: Boolean) {
+    for (tool in serverRegisteredHostTools(viaRegistry)) {
         if (tool.name.startsWith("setup_terminal_") && !setupToolEnabled(tool.name)) continue
         server.addTool(
             name = tool.name,
@@ -250,18 +265,26 @@ private suspend fun setupSignal(args: JsonObject): CallToolResult {
 
 private const val RUN_IN_SIDEBAR_DESCRIPTION =
     "Open BossConsole's sidebar terminal in the focused window and run a shell " +
-        "command there — the same flow as the in-app Runner. The sidebar terminal then " +
+        "command there, the same flow as the in-app Runner. The sidebar terminal then " +
         "appears in list_tabs / read_scrollback like any other tab, so you can read its " +
         "output afterwards. Pass config_id to keep a stable tab per run configuration, and " +
         "is_rerun=true (with config_id) to re-run in that existing tab (sends Ctrl+C, " +
-        "clears, then re-runs) instead of opening a new one."
+        "clears, then re-runs) instead of opening a new one. Pass env to give the command " +
+        "environment variables without putting their values on the command line: a value " +
+        "may be a {{secret:<id>}} reference, which the host resolves after the operator " +
+        "approves, so a credential reaches the shell without ever reaching you. Put secret " +
+        "references ONLY in env values, never in command, working_dir or name: the host " +
+        "resolves a reference in any argument, and one in command is typed into the terminal, " +
+        "where it stays in the scrollback in plain text."
 
 private fun runInSidebarSchema(): ToolSchema =
     ToolSchema(
         properties = buildJsonObject {
             putJsonObject("command") {
                 put("type", "string")
-                put("description", "Shell command to run in the sidebar terminal.")
+                put("description", "Shell command to run in the sidebar terminal. Never put a " +
+                        "{{secret:<id>}} reference here: pass the value through env and read it " +
+                        "as a variable (for example \$TOKEN), or it ends up in the scrollback.")
             }
             putJsonObject("working_dir") {
                 put("type", "string")
@@ -282,9 +305,40 @@ private fun runInSidebarSchema(): ToolSchema =
                 put("description", "Optional label for this run in the top-bar runner dropdown. " +
                         "Defaults to the command.")
             }
+            putJsonObject("env") {
+                put("type", "object")
+                putJsonObject("additionalProperties") { put("type", "string") }
+                put("description", "Optional environment variables for the command, as an object " +
+                        "of NAME to value. Values never appear in the command line, the scrollback " +
+                        "or this tool's result; a value may be a {{secret:<id>}} reference.")
+            }
         },
         required = listOf("command")
     )
+
+/** Test seam over [TabbedTerminalStateRegistry.newSidebarTab], which needs a live window. */
+@Volatile
+internal var sidebarTabStarter: (windowId: String, command: String, workingDir: String?, configId: String, isRerun: Boolean) -> Boolean =
+    { windowId, command, workingDir, configId, isRerun ->
+        TabbedTerminalStateRegistry.newSidebarTab(
+            windowId = windowId,
+            command = command,
+            workingDirectory = workingDir,
+            configId = configId,
+            isRerun = isRerun,
+        )
+    }
+
+/** Test seam over [registerSidebarRunWithRunner], which reaches the host runner by reflection. */
+@Volatile
+internal var sidebarRunnerRegistrar: (windowId: String, configId: String, command: String, workingDir: String?, name: String) -> Boolean =
+    { windowId, configId, command, workingDir, name ->
+        registerSidebarRunWithRunner(windowId = windowId, configId = configId, command = command, workingDir = workingDir, name = name)
+    }
+
+/** Test seam over the host's focused-window lookup. */
+@Volatile
+internal var sidebarWindowLookup: () -> String? = ::focusedWindowId
 
 private suspend fun runInSidebar(args: JsonObject): CallToolResult {
     val command = args.str("command")
@@ -293,6 +347,26 @@ private suspend fun runInSidebar(args: JsonObject): CallToolResult {
     }
     val workingDir = args.str("working_dir")
     val isRerun = args.bool("is_rerun") ?: false
+    val env = args.envMap("env") ?: return errorResult("env must be an object of string values")
+    SidebarEnvInjection.validationError(env)?.let { return errorResult(it) }
+    SidebarEnvInjection.unresolvedSecretKeys(env).takeIf { it.isNotEmpty() }?.let { keys ->
+        return errorResult(
+            "Unresolved {{secret:...}} reference in env ${keys.joinToString()}: this call did not come through the " +
+                "host's approval gate, which is what resolves references, so the literal text would reach the shell. " +
+                "Nothing was run.",
+        )
+    }
+    // The env file is written in the sidebar shell's own language; for a shell without a format
+    // (cmd.exe, nushell, csh...), refuse before anything is written rather than send it a line
+    // it cannot parse. A command without env runs in any shell, as before.
+    val shell = if (env.isEmpty()) null else SidebarEnvInjection.sidebarShellProvider()
+    val family = shell?.let(SidebarEnvInjection::shellFamily)
+    if (family == SidebarEnvInjection.ShellFamily.UNSUPPORTED) {
+        return errorResult(
+            "env is not supported for the sidebar shell ${java.io.File(shell).name}; it needs bash, zsh, sh, fish or " +
+                "PowerShell. Nothing was run.",
+        )
+    }
 
     // Stable id used as BOTH the sidebar tab id and the runner config id, so the
     // top-bar runner's running-state and the tab's close-cleanup line up. When the
@@ -303,21 +377,42 @@ private suspend fun runInSidebar(args: JsonObject): CallToolResult {
         ?: command.trim().lineSequence().firstOrNull()?.take(60)?.ifBlank { null }
         ?: command
 
-    val windowId = focusedWindowId()
+    val windowId = sidebarWindowLookup()
         ?: return errorResult("No focused BossConsole window; focus a window and retry.")
 
+    // The line the SHELL is sent. With env, the values and the command go to an owner-only file,
+    // and the shell gets a short loader naming it (see SidebarEnvInjection): a fixed length
+    // whatever the command, so a long one is not cut off by the terminal's input limit. The
+    // command line and the runner entry carry the loader (a path, never a value); the result
+    // below carries the caller's own command and the variable names.
+    var envFile: java.io.File? = null
+    val shellCommand =
+        if (family == null) {
+            command
+        } else {
+            try {
+                val file = SidebarEnvInjection.writeEnvFile(env, command, SidebarEnvInjection.envDir(), family)
+                    .also { envFile = it }
+                SidebarEnvInjection.loaderCommand(file, family)
+            } catch (t: Throwable) {
+                envFile?.delete()
+                hostToolsLogger.warn(LogCategory.TERMINAL, "run_in_sidebar: could not write env file", error = t)
+                // The exception type only: a message could one day quote file content, a value.
+                return errorResult("Failed to prepare environment for the command (${t::class.simpleName}). Nothing was run.")
+            }
+        }
+
+    // The env file holds the values in plaintext until the shell sources it, so every path on
+    // which no shell will run the command deletes it here rather than leaving it on disk.
     val started = try {
-        TabbedTerminalStateRegistry.newSidebarTab(
-            windowId = windowId,
-            command = command,
-            workingDirectory = workingDir,
-            configId = configId,
-            isRerun = isRerun
-        )
+        sidebarTabStarter(windowId, shellCommand, workingDir, configId, isRerun)
     } catch (t: Throwable) {
+        envFile?.delete()
         hostToolsLogger.warn(LogCategory.TERMINAL, "run_in_sidebar: newSidebarTab failed", error = t)
         return errorResult("Failed to start sidebar command: ${t.message}")
     }
+    // false: the sidebar terminal is gone, so nothing was queued and nothing will source the file.
+    if (!started) envFile?.delete()
 
     // Ensure the sidebar terminal panel is visible. On a fresh open this also
     // drives the pending-command consumption that actually runs the command
@@ -328,18 +423,23 @@ private suspend fun runInSidebar(args: JsonObject): CallToolResult {
     // Register the run with the host runner so the top-bar runner reflects it
     // (selects the config + shows running/Stop). Best-effort; the command still
     // runs even if the host class isn't reachable.
-    val runnerUpdated = registerSidebarRunWithRunner(
-        windowId = windowId,
-        configId = configId,
-        command = command,
-        workingDir = workingDir,
-        name = runName
-    )
+    // The runner entry gets the loader, not the bare command. Its file is gone after the first run,
+    // so a re-run from the top-bar runner prints why and runs nothing, instead of silently running
+    // the command without its variables. Values are never in it.
+    val runnerUpdated = sidebarRunnerRegistrar(windowId, configId, shellCommand, workingDir, runName)
 
-    return jsonResult(isError = false) {
+    // isError when nothing was started, so an agent that just got approval does not read a
+    // queued-nothing result as the command having run.
+    return jsonResult(isError = !started) {
         put("ok", started)
         put("windowId", windowId)
+        // The caller's command, not the shell command: the env file path is an implementation
+        // detail, and the values are never echoed. Only the NAMES say what was injected.
         put("command", command)
+        put("envKeys", JsonArray(env.keys.sorted().map(::JsonPrimitive)))
+        SidebarEnvInjection.sensitiveKeys(env).takeIf { it.isNotEmpty() }?.let { keys ->
+            put("sensitiveEnvKeys", JsonArray(keys.map(::JsonPrimitive)))
+        }
         put("configId", configId)
         put("isRerun", isRerun)
         put("panelOpenRequested", panelRequested)
@@ -568,6 +668,24 @@ private fun JsonObject?.str(key: String): String? {
     val prim = this?.get(key) as? JsonPrimitive ?: return null
     if (prim is JsonNull) return null
     return prim.content
+}
+
+/**
+ * Read [key] as a map of string values. Absent means an empty map; anything that is not an
+ * object of string primitives (an array, a nested object, a number) means null, so the caller
+ * can refuse it rather than inject half of it.
+ */
+private fun JsonObject?.envMap(key: String): Map<String, String>? {
+    val element = this?.get(key) ?: return emptyMap()
+    if (element is JsonNull) return emptyMap()
+    val obj = element as? JsonObject ?: return null
+    val out = LinkedHashMap<String, String>()
+    for ((k, v) in obj) {
+        val prim = v as? JsonPrimitive ?: return null
+        if (!prim.isString) return null
+        out[k] = prim.content
+    }
+    return out
 }
 
 /** Read [key] as a boolean, accepting `"true"`/`"false"` as strings. See [str] for the `as?`. */

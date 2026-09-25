@@ -94,6 +94,13 @@ internal fun installDynamicPluginTools(
     server: Server,
     registry: McpToolRegistry,
     scope: CoroutineScope,
+    /**
+     * Names the bridge must never put on the server. [RESERVED_TOOL_NAMES] when this plugin's
+     * own two tools are registered straight onto the server; [bossTermOwnToolNames] when they
+     * come through the registry like everything else (see [HostMcpToolProvider]), in which
+     * case reserving their names would be the bridge skipping exactly the tools it should carry.
+     */
+    reserved: Set<String> = RESERVED_TOOL_NAMES,
 ) {
     if (bridgeDisposed) {
         dynLogger.warn(LogCategory.TERMINAL, "Bridge install skipped: plugin already disposed")
@@ -104,10 +111,47 @@ internal fun installDynamicPluginTools(
     val present = mutableSetOf<String>() // plugin tool names currently on this server
     currentSyncJob = scope.launch {
         registry.tools.collect { tools ->
-            mutex.withLock { syncTools(server, registry, tools, present) }
+            mutex.withLock { syncTools(server, registry, tools, present, reserved) }
         }
     }
     dynLogger.info(LogCategory.TERMINAL, "Dynamic plugin MCP tool bridge installed")
+}
+
+/**
+ * Everything this plugin adds to the `boss` MCP server beyond BossTerm's built-ins.
+ *
+ * - Host tools through the registry ([HostMcpToolProvider] took): the bridge carries
+ *   `run_in_sidebar` and `cli` like any other registry tool, and the setup-terminal tools still go
+ *   straight onto the server (see [serverRegisteredHostTools]), so their names stay reserved with
+ *   BossTerm's own and no registry tool can shadow them.
+ * - A registry, but the provider did not take: every host tool on the server, plus the bridge.
+ * - No registry (an old host): every host tool on the server, and no plugin-contributed tools.
+ */
+internal fun installBossServerTools(
+    server: Server,
+    toolRegistry: McpToolRegistry?,
+    hostToolsViaRegistry: Boolean,
+    scope: CoroutineScope,
+) {
+    when {
+        hostToolsViaRegistry && toolRegistry != null -> {
+            registerHostToolsOnServer(server, viaRegistry = true)
+            installDynamicPluginTools(
+                server,
+                toolRegistry,
+                scope,
+                reserved = bossTermOwnToolNames + setupTerminalMcpToolDefs.map { it.name },
+            )
+        }
+        toolRegistry != null -> {
+            registerHostToolsOnServer(server, viaRegistry = false)
+            installDynamicPluginTools(server, toolRegistry, scope)
+        }
+        else -> {
+            registerHostToolsOnServer(server, viaRegistry = false)
+            dynLogger.warn(LogCategory.TERMINAL, "mcpToolRegistry unavailable; plugin-contributed MCP tools disabled")
+        }
+    }
 }
 
 /** Re-arm the bridge; called at plugin (re-)registration before the MCP manager starts. */
@@ -127,12 +171,13 @@ private suspend fun syncTools(
     registry: McpToolRegistry,
     desired: List<RegisteredMcpTool>,
     present: MutableSet<String>,
+    reserved: Set<String> = RESERVED_TOOL_NAMES,
 ) {
     // Build the wanted set, dropping reserved names (registry already dedups by name).
     val wanted = LinkedHashMap<String, RegisteredMcpTool>()
     for (tool in desired) {
         val name = tool.definition.name
-        if (name in RESERVED_TOOL_NAMES) {
+        if (name in reserved) {
             dynLogger.warn(
                 LogCategory.TERMINAL, "Skipping plugin MCP tool with reserved name",
                 mapOf("tool" to name, "providerId" to tool.providerId),
