@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.api.*
 import ai.rever.bossterm.compose.auth.BossAccountManager.AccountState
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.*
 import kotlin.test.*
 
@@ -85,7 +86,7 @@ class HostAccountSessionBridgeTest {
         val auth = Auth().apply { currentUser.value = user("one") }
         var attempts = 0
         val failures = mutableListOf<Throwable>()
-        val bridge = HostAccountSessionBridge(auth, Database(), onFailure = { failures += it }) {
+        val bridge = HostAccountSessionBridge(auth, Database(), onFailure = { failures += it }, cleanupRetryDelaysMillis = emptyList()) {
             attempts++
             if (attempts == 1) error("revocation failed")
         }
@@ -132,6 +133,35 @@ class HostAccountSessionBridgeTest {
         } finally {
             bridge.close()
         }
+    }
+
+    @Test fun `transient cleanup failure recovers without another login emission`(): Unit = runBlocking {
+        val auth = Auth().apply { currentUser.value = user("one") }
+        var attempts = 0
+        val bridge = HostAccountSessionBridge(auth, Database(), cleanupRetryDelaysMillis = listOf(1)) {
+            if (++attempts == 1) error("temporary cleanup failure")
+        }
+        bridge.start(this)
+        try {
+            auth.currentUser.value = user("two")
+            withTimeout(2_000) { bridge.state.first { it == AccountState.SignedIn("two@example.test", "two") } }
+            assertEquals(2, attempts)
+        } finally { bridge.close() }
+    }
+
+    @Test fun `close cancels suspended cleanup and remains signed out`(): Unit = runBlocking {
+        val auth = Auth().apply { currentUser.value = user("one") }
+        val entered = CompletableDeferred<Unit>()
+        val cancelled = CompletableDeferred<Unit>()
+        val bridge = HostAccountSessionBridge(auth, Database()) {
+            entered.complete(Unit)
+            try { awaitCancellation() } finally { cancelled.complete(Unit) }
+        }
+        bridge.start(this)
+        auth.currentUser.value = user("two")
+        try { withTimeout(2_000) { entered.await() } } finally { bridge.close() }
+        withTimeout(2_000) { cancelled.await() }
+        assertEquals(AccountState.SignedOut, bridge.state.value)
     }
 
 }

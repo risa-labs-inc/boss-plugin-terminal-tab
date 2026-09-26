@@ -262,6 +262,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
                 infoFor = SessionShareManager::infoFor,
                 sessionNameFor = SessionShareManager::sessionNameFor,
                 deviceName = SessionShareManager::defaultSessionName,
+                // Host transport takes precedence; standalone REST arguments are unused.
                 accessToken = { null },
                 restBaseUrl = "host RPC",
                 anonKey = "",
@@ -470,8 +471,8 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
 
     override fun dispose() {
         stopAccountServices()
-        // Keep the signed-out bridge installed until the classloader is discarded: a still
-        // composing old terminal must never fall back to BossTerm's standalone auth file.
+        // disconnect() detaches the transport but retains the signed-out host facade.
+        // A still-composing old terminal never falls back to standalone credentials.
         // Stop session sharing (idempotent; tears down the share server and
         // tunnels) and clear any approval toasts still on screen. The
         // pendingRequests collector dies with pluginScope cancellation.

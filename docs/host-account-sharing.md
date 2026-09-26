@@ -49,5 +49,6 @@ composite property remains available for opt-in local development. FontUtils and
 ImageRenderer overrides match the release source apart from attribution comments.
 
 If any identity cleanup step fails, the remaining steps still run and sharing stays signed
-out. The collector stays alive and retries cleanup on the next host identity event. Errors
+out. Cleanup retries after 250 ms, 1 s and 4 s even without another identity event.
+Persistent failures stay signed out until a later host identity event or reload. Errors
 log only operation names and exception types, never payloads or bearer URLs.

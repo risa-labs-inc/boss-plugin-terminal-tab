@@ -8,6 +8,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -22,11 +23,12 @@ internal class HostAccountSessionBridge(
     private val auth: AuthDataProvider?,
     private val database: SupabaseDataProvider?,
     private val onFailure: (Throwable) -> Unit = {},
+    private val cleanupRetryDelaysMillis: List<Long> = listOf(250, 1_000, 4_000),
     private val onIdentityChanging: suspend () -> Unit,
 ) : HostAccountSessions {
     private val mutableState = MutableStateFlow<AccountState>(AccountState.SignedOut)
     override val state = mutableState.asStateFlow()
-    private var job: Job? = null
+    @Volatile private var job: Job? = null
     private var cleanupPending = false
 
     fun start(scope: CoroutineScope) {
@@ -40,7 +42,8 @@ internal class HostAccountSessionBridge(
                 if (cleanupPending || previous?.userId != (next as? AccountState.SignedIn)?.userId) {
                     mutableState.value = AccountState.SignedOut
                     cleanupPending = cleanupPending || previous != null
-                    if (cleanupPending) {
+                    var retry = 0
+                    while (cleanupPending) {
                         try {
                             onIdentityChanging()
                             cleanupPending = false
@@ -48,13 +51,15 @@ internal class HostAccountSessionBridge(
                             throw e
                         } catch (t: Throwable) {
                             onFailure(t)
-                            // Keep tracking login, but never publish under a new identity until
-                            // all old-account links and connections have been revoked.
-                            return@collect
+                            // A transient failure must not depend on another StateFlow emission.
+                            // Persistent failure stays signed out; a later login retries anew.
+                            if (retry >= cleanupRetryDelaysMillis.size) return@collect
+                            delay(cleanupRetryDelaysMillis[retry++])
                         }
                     }
                 }
-                mutableState.value = next
+                // A newer login may have arrived while cleanup was suspended.
+                if (auth.currentUser.value?.id == user?.id) mutableState.value = next
             }
         }
     }
