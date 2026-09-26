@@ -140,7 +140,9 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
                 onFailure = { logAccountFailure("Account transition", it) },
                 onCleanupExhausted = {
                     // Repeated revocation failure must not leave old-account links live.
-                    accountCleanup("Stop automatic sharing after cleanup failure") { AccountAutoShare.Default.stop() }
+                    // Stop viewers, directory and publisher too; this closes the bridge
+                    // and cancels its collector, so a later login cannot partially re-arm it.
+                    stopAccountServices()
                     accountCleanup("Shut down sharing after cleanup failure") { SessionShareManager.shutdown() }
                 },
             ) {

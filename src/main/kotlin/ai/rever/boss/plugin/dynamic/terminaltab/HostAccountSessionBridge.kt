@@ -31,12 +31,14 @@ internal class HostAccountSessionBridge(
     override val state = mutableState.asStateFlow()
     @Volatile private var job: Job? = null
     private var cleanupPending = false
+    private var disabled = false
 
     fun start(scope: CoroutineScope) {
         if (job != null) return
         // Publish the current identity before any terminal UI or account service is created.
         job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
             auth?.currentUser?.collect { user ->
+                if (disabled) return@collect
                 val next = user?.takeIf { database != null }?.let { AccountState.SignedIn(it.email, it.id) }
                     ?: AccountState.SignedOut
                 val previous = mutableState.value as? AccountState.SignedIn
@@ -53,8 +55,9 @@ internal class HostAccountSessionBridge(
                         } catch (t: Throwable) {
                             onFailure(t)
                             // A transient failure must not depend on another StateFlow emission.
-                            // Persistent failure stays signed out; a later login retries anew.
+                            // Exhausted retries disable this bridge until the plugin is reloaded.
                             if (retry >= cleanupRetryDelaysMillis.size) {
+                                disabled = true
                                 try { onCleanupExhausted() } catch (e: CancellationException) { throw e }
                                 catch (t: Throwable) { onFailure(t) }
                                 return@collect

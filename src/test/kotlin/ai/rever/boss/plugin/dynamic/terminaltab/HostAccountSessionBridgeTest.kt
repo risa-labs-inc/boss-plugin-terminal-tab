@@ -82,7 +82,7 @@ class HostAccountSessionBridgeTest {
             } finally { bridge.close() }
         }
     }
-    @Test fun `failed revocation stays signed out and retries on later login`() = runBlocking {
+    @Test fun `exhausted revocation stays signed out across later login`() = runBlocking {
         val auth = Auth().apply { currentUser.value = user("one") }
         var attempts = 0
         val failures = mutableListOf<Throwable>()
@@ -99,8 +99,8 @@ class HostAccountSessionBridgeTest {
             assertEquals(1, failures.size)
             auth.currentUser.value = user("three")
             yield()
-            assertEquals(2, attempts)
-            assertEquals(AccountState.SignedIn("three@example.test", "three"), bridge.state.value)
+            assertEquals(1, attempts)
+            assertEquals(AccountState.SignedOut, bridge.state.value)
         } finally {
             bridge.close()
         }
