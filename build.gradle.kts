@@ -275,14 +275,11 @@ val pinnedLocalApiJar = provider {
 // closes the host tab from it. Also re-check that SettingsManager still saves
 // synchronously to settings.json under bossterm.settings.dir:
 // applyCollapsedTabStripDefault reads it back right after updateSetting.
-// Includes HostAccountSessions and failed-initialization isolation.
-// FontUtils/ImageRenderer match the 1.2.169 release source except attribution comments.
-// Relay/preferences interfaces are currently supplied by the pinned paired-source
-// draft CI path (BossTerm#434), not this published artifact. Keep release builds
-// on Maven: after the companion release, bump this pin and review the overrides.
-val bosstermVersion = "1.2.169"
+// Includes host account isolation, relay tickets and account viewing preferences.
+// Recheck FontUtils/ImageRenderer against the published artifact before release.
+val bosstermVersion = "1.2.170"
 // This source override must be reviewed (or removed) whenever BossTerm changes.
-check(bosstermVersion == "1.2.169") {
+check(bosstermVersion == "1.2.170") {
     "Review the ImageRenderer and FontUtils overrides before upgrading BossTerm"
 }
 

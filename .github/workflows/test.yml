@@ -9,17 +9,9 @@ on:
   push:
     branches: [main]
 
-# Temporary stacked-PR validation. A draft may compile against the reviewed
-# companion source; ready-for-review PRs and main MUST use the Maven dependency.
-# Remove this path once BossTerm#434 is released and bosstermVersion is updated.
-# Keep this condition in sync with jobs.test.name (job names cannot read workflow env).
-# Renaming this branch intentionally falls back to published-artifact validation.
-env:
-  PAIRED_BOSSTERM: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft && github.head_ref == 'feature/terminal-relay' }}
-
 jobs:
   test:
-    name: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft && github.head_ref == 'feature/terminal-relay' && format('{0} (paired BossTerm source)', matrix.os) || (matrix.os == 'ubuntu-latest' && 'test' || 'windows-script-tests') }}
+    name: ${{ matrix.os == 'ubuntu-latest' && 'test' || 'windows-script-tests' }}
     strategy:
       fail-fast: false
       matrix:
@@ -30,28 +22,6 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
-
-      - name: Checkout pinned companion for draft relay tests
-        if: env.PAIRED_BOSSTERM == 'true'
-        uses: actions/checkout@v4
-        with:
-          repository: kshivang/BossTerm
-          # BossTerm#434. Pin source and its compatible Gradle wrapper together.
-          # Keep this ref and the summary SHA below aligned with the reviewed companion commit;
-          # a companion API change requires updating both before pushing this plugin.
-          ref: 3321aed4069c3ff9b5653f604d541f7c379d078b
-          path: .paired-bossterm
-          persist-credentials: false
-
-      - name: Explain draft dependency validation
-        if: env.PAIRED_BOSSTERM == 'true'
-        run: |
-          cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
-          This draft tests against BossTerm#434 source at `3321aed4069c3ff9b5653f604d541f7c379d078b`.
-          BossTerm 1.2.169 does not contain the relay/preferences interfaces. This is **not** a published-dependency release check.
-          Before marking this PR ready, release the companion BossTerm change, update `bosstermVersion`, and review the guarded rendering/font overrides.
-          Ready-for-review PRs and the release workflow continue building against the declared Maven artifact without source substitution.
-          SUMMARY
 
       - uses: actions/setup-java@v4
         with:
@@ -90,13 +60,7 @@ jobs:
         if: runner.os == 'Linux'
         # The setup lifecycle tests render a real terminal. Provide a display
         # on Linux and also validate the installable bundled artifact.
-        run: |
-          if [[ "$PAIRED_BOSSTERM" == "true" ]]; then
-            xvfb-run -a bash ./.paired-bossterm/gradlew -p . test buildPluginJar --no-daemon \
-              -PbosstermSourceDir="$GITHUB_WORKSPACE/.paired-bossterm"
-          else
-            xvfb-run -a ./gradlew test buildPluginJar --no-daemon
-          fi
+        run: xvfb-run -a ./gradlew test buildPluginJar --no-daemon
         env:
           CI: 'true'
 
@@ -106,15 +70,6 @@ jobs:
       # Restricted execution policy, the default on Windows client editions.
       - name: Verify Windows scripts
         if: runner.os == 'Windows'
-        run: |
-          if [[ "$PAIRED_BOSSTERM" == "true" ]]; then
-            bash ./.paired-bossterm/gradlew -p . test --tests '*HostAccountSessionBridgeTest' \
-              --tests '*OnboardingInstallScriptTest' --tests '*PluginManifestTest' \
-              --tests '*SidebarEnvInjectionTest' buildPluginJar --no-daemon \
-              -PbosstermSourceDir="$GITHUB_WORKSPACE/.paired-bossterm"
-          else
-            ./gradlew test --tests '*HostAccountSessionBridgeTest' --tests '*OnboardingInstallScriptTest' \
-              --tests '*PluginManifestTest' --tests '*SidebarEnvInjectionTest' buildPluginJar --no-daemon
-          fi
+        run: ./gradlew test --tests '*HostAccountSessionBridgeTest' --tests '*OnboardingInstallScriptTest' --tests '*PluginManifestTest' --tests '*SidebarEnvInjectionTest' buildPluginJar --no-daemon
         env:
           CI: 'true'
