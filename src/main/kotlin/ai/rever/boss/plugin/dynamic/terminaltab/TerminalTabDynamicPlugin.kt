@@ -13,6 +13,7 @@ import ai.rever.boss.plugin.dynamic.terminaltab.onboarding.BossTermSetupControll
 import ai.rever.bossterm.compose.settings.SettingsManager
 import ai.rever.bossterm.compose.share.AccountAutoRemote
 import ai.rever.bossterm.compose.share.AccountAutoShare
+import ai.rever.bossterm.compose.share.AccountTerminalPreferences
 import ai.rever.bossterm.compose.share.AccountSessionDirectory
 import ai.rever.bossterm.compose.share.AccountSessionPublisher
 import ai.rever.bossterm.compose.share.AccountSessionSource
@@ -278,6 +279,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
                 host = checkNotNull(AccountSessionSource.host),
             ).also { it.start() }
             AccountAutoShare.Default.start()
+            AccountTerminalPreferences.Default.start()
             AccountSessionDirectory.Default.start()
             AccountAutoRemote.Default.start()
         } catch (t: Throwable) {
@@ -467,6 +469,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
     @Synchronized
     private fun stopAccountServices() {
         accountCleanup("Stop account viewers") { AccountAutoRemote.Default.stop() }
+        accountCleanup("Stop account preferences") { AccountTerminalPreferences.Default.stop() }
         accountCleanup("Stop account directory") { AccountSessionDirectory.Default.stop() }
         accountCleanup("Stop auto sharing") { AccountAutoShare.Default.stop() }
         // stop() synchronously waits at most 3 seconds for row deletion in BossTerm.

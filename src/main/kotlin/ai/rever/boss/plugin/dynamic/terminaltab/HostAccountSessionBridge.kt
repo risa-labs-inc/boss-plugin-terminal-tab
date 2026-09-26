@@ -3,6 +3,8 @@ package ai.rever.boss.plugin.dynamic.terminaltab
 import ai.rever.boss.plugin.api.AuthDataProvider
 import ai.rever.boss.plugin.api.SupabaseDataProvider
 import ai.rever.bossterm.compose.auth.BossAccountManager.AccountState
+import ai.rever.bossterm.compose.share.HostTerminalRelay
+import ai.rever.bossterm.compose.share.HostTerminalPreferences
 import ai.rever.bossterm.compose.share.HostAccountSessions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -26,7 +28,7 @@ internal class HostAccountSessionBridge(
     private val onCleanupExhausted: () -> Unit = {},
     private val cleanupRetryDelaysMillis: List<Long> = listOf(250, 1_000, 4_000),
     private val onIdentityChanging: suspend () -> Unit,
-) : HostAccountSessions {
+) : HostAccountSessions, HostTerminalPreferences, HostTerminalRelay {
     private val mutableState = MutableStateFlow<AccountState>(AccountState.SignedOut)
     override val state = mutableState.asStateFlow()
     @Volatile private var job: Job? = null
@@ -91,6 +93,32 @@ internal class HostAccountSessionBridge(
         check(owns(userId)) { "Terminal account changed" }
         return result
     }
+
+    override suspend fun relayTicket(userId: String, roomId: String, role: String): String {
+        require(role == "host" || role == "account")
+        val room = java.util.UUID.fromString(roomId).toString()
+        check(owns(userId)) { "Terminal account changed" }
+        val parameters = buildJsonObject {
+            put("p_expected_user_id", userId); put("p_room_id", room); put("p_role", role)
+        }.toString()
+        val result = checkNotNull(database).rpc("mint_terminal_relay_ticket", parameters).getOrThrow()
+        check(owns(userId)) { "Terminal account changed" }
+        return result
+    }
+
+    private suspend fun settingsRpc(userId: String, function: String): String {
+        check(owns(userId)) { "Terminal account changed" }
+        val parameters = buildJsonObject { put("p_expected_user_id", userId) }.toString()
+        val result = checkNotNull(database).rpc(function, parameters).getOrThrow()
+        check(owns(userId)) { "Terminal account changed" }
+        return result
+    }
+
+    override suspend fun preferences(userId: String): String =
+        settingsRpc(userId, "get_user_terminal_preferences")
+
+    override suspend fun settingsHandoff(userId: String): String =
+        settingsRpc(userId, "mint_user_settings_handoff")
 
     // Errors never log row payloads: share URLs contain bearer credentials and E2E keys.
     private suspend fun mutation(block: suspend () -> Unit): Boolean = try {

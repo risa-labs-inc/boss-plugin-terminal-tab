@@ -28,6 +28,24 @@ class HostAccountSessionBridgeTest {
     }
     private fun user(id: String) = UserData(id, "$id@example.test", null, null, emptyList(), 0)
 
+    @Test fun `settings and relay tickets remain bound to the host identity`() = runBlocking {
+        val auth = Auth().apply { currentUser.value = user("one") }
+        val db = Database()
+        val bridge = HostAccountSessionBridge(auth, db) {}
+        bridge.start(this)
+        try {
+            bridge.preferences("one")
+            bridge.settingsHandoff("one")
+            bridge.relayTicket("one", "11111111-1111-4111-8111-111111111111", "host")
+            assertEquals(listOf("get_user_terminal_preferences", "mint_user_settings_handoff", "mint_terminal_relay_ticket"), db.calls.map { it.first })
+            assertTrue(db.calls.all { it.second["p_expected_user_id"] == JsonPrimitive("one") })
+            assertEquals(JsonPrimitive("host"), db.calls.last().second["p_role"])
+            auth.currentUser.value = user("two")
+            assertFailsWith<IllegalStateException> { bridge.relayTicket("one", "11111111-1111-4111-8111-111111111111", "host") }
+            assertEquals(3, db.calls.size)
+        } finally { bridge.close() }
+    }
+
     @Test fun `restores host login and uses authenticated RPCs without tokens`() = runBlocking {
         val auth = Auth().apply { currentUser.value = user("one") }
         val db = Database()
