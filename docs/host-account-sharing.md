@@ -50,5 +50,13 @@ ImageRenderer overrides match the release source apart from attribution comments
 
 If any identity cleanup step fails, the remaining steps still run and sharing stays signed
 out. Cleanup retries after 250 ms, 1 s and 4 s even without another identity event.
-Persistent failures stay signed out until a later host identity event or reload. Errors
+When retries are exhausted, automatic sharing stops and the sharing server is shut down
+so old-account links cannot remain live. Sharing requires a plugin reload after this fallback. Errors
 log only operation names and exception types, never payloads or bearer URLs.
+
+Publisher shutdown waits synchronously for up to 3 seconds while the host bridge remains
+open for row deletion. The host loader does not guarantee an IO dispatcher for disposal,
+so an unload on the UI thread may pause for that bound. The host RPC provider delegates
+to the asynchronous Supabase/Ktor client and does not marshal completion to Main/EDT.
+The bounded wait preserves delete-before-bridge-close ordering; stale rows otherwise
+expire after 90 seconds. A host-only asynchronous disposal API is a future improvement.

@@ -1,6 +1,6 @@
 rootProject.name = "boss-plugin-terminal-tab"
 
-// Paired development before the BossTerm host-account API is published.
+// Paired development against a matching local BossTerm checkout.
 providers.gradleProperty("bosstermSourceDir").orNull?.let { sourceDir ->
     includeBuild(sourceDir) {
         dependencySubstitution {

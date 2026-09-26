@@ -164,4 +164,23 @@ class HostAccountSessionBridgeTest {
         assertEquals(AccountState.SignedOut, bridge.state.value)
     }
 
+    @Test fun `exhausted cleanup invokes shutdown fallback while signed out`(): Unit = runBlocking {
+        val auth = Auth().apply { currentUser.value = user("one") }
+        var attempts = 0
+        val stopped = CompletableDeferred<Unit>()
+        val bridge = HostAccountSessionBridge(auth, Database(),
+            onCleanupExhausted = { stopped.complete(Unit) }, cleanupRetryDelaysMillis = listOf(1, 1)) {
+            attempts++
+            error("persistent cleanup failure")
+        }
+        bridge.start(this)
+        try {
+            auth.currentUser.value = user("two")
+            withTimeout(2_000) { stopped.await() }
+            assertEquals(3, attempts)
+            assertEquals(AccountState.SignedOut, bridge.state.value)
+            assertFalse(bridge.upsert("two", "{}"))
+        } finally { bridge.close() }
+    }
+
 }

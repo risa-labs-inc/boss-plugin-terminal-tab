@@ -23,6 +23,7 @@ internal class HostAccountSessionBridge(
     private val auth: AuthDataProvider?,
     private val database: SupabaseDataProvider?,
     private val onFailure: (Throwable) -> Unit = {},
+    private val onCleanupExhausted: () -> Unit = {},
     private val cleanupRetryDelaysMillis: List<Long> = listOf(250, 1_000, 4_000),
     private val onIdentityChanging: suspend () -> Unit,
 ) : HostAccountSessions {
@@ -53,7 +54,11 @@ internal class HostAccountSessionBridge(
                             onFailure(t)
                             // A transient failure must not depend on another StateFlow emission.
                             // Persistent failure stays signed out; a later login retries anew.
-                            if (retry >= cleanupRetryDelaysMillis.size) return@collect
+                            if (retry >= cleanupRetryDelaysMillis.size) {
+                                try { onCleanupExhausted() } catch (e: CancellationException) { throw e }
+                                catch (t: Throwable) { onFailure(t) }
+                                return@collect
+                            }
                             delay(cleanupRetryDelaysMillis[retry++])
                         }
                     }

@@ -138,6 +138,11 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
                 context.authDataProvider,
                 context.supabaseDataProvider,
                 onFailure = { logAccountFailure("Account transition", it) },
+                onCleanupExhausted = {
+                    // Repeated revocation failure must not leave old-account links live.
+                    accountCleanup("Stop automatic sharing after cleanup failure") { AccountAutoShare.Default.stop() }
+                    accountCleanup("Shut down sharing after cleanup failure") { SessionShareManager.shutdown() }
+                },
             ) {
                 var failure: Throwable? = null
                 suspend fun reset(name: String, action: suspend () -> Unit) {
@@ -460,7 +465,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         accountCleanup("Stop account viewers") { AccountAutoRemote.Default.stop() }
         accountCleanup("Stop account directory") { AccountSessionDirectory.Default.stop() }
         accountCleanup("Stop auto sharing") { AccountAutoShare.Default.stop() }
-        // stop() synchronously waits for row deletion, bounded by BossTerm's timeout.
+        // stop() synchronously waits at most 3 seconds for row deletion in BossTerm.
         // Keep the host bridge open until it returns.
         accountCleanup("Stop account publisher") { accountPublisher?.stop() }
         accountPublisher = null
