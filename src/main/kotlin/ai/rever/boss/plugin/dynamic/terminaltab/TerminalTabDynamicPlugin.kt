@@ -160,6 +160,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
                     }
                 }
                 reset("Refresh account identity") { AccountSessionSource.refreshHostIdentity() }
+                reset("Reset account preferences") { AccountTerminalPreferences.Default.resetAccount() }
                 reset("Reset auto sharing") { AccountAutoShare.Default.resetAccount() }
                 reset("Revoke account shares") { SessionShareManager.revokeAccountShares() }
                 reset("Reset account directory") { AccountSessionDirectory.Default.resetAccount() }

@@ -35,7 +35,9 @@ jobs:
         with:
           repository: kshivang/BossTerm
           # BossTerm#434. Pin source and its compatible Gradle wrapper together.
-          ref: 36584ef3eae1c66ef7e3137a64559fa37c1198c3
+          # Keep this ref and the summary SHA below aligned with the reviewed companion commit;
+          # a companion API change requires updating both before pushing this plugin.
+          ref: 3321aed4069c3ff9b5653f604d541f7c379d078b
           path: .paired-bossterm
           persist-credentials: false
 
@@ -43,7 +45,7 @@ jobs:
         if: env.PAIRED_BOSSTERM == 'true'
         run: |
           cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
-          This draft tests against BossTerm#434 source at `36584ef3eae1c66ef7e3137a64559fa37c1198c3`.
+          This draft tests against BossTerm#434 source at `3321aed4069c3ff9b5653f604d541f7c379d078b`.
           BossTerm 1.2.169 does not contain the relay/preferences interfaces. This is **not** a published-dependency release check.
           Before marking this PR ready, release the companion BossTerm change, update `bosstermVersion`, and review the guarded rendering/font overrides.
           Ready-for-review PRs and the release workflow continue building against the declared Maven artifact without source substitution.

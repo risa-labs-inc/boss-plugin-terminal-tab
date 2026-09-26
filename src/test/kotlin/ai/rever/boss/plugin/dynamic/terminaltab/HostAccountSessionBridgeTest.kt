@@ -42,7 +42,64 @@ class HostAccountSessionBridgeTest {
             assertEquals(JsonPrimitive("host"), db.calls.last().second["p_role"])
             auth.currentUser.value = user("two")
             assertFailsWith<IllegalStateException> { bridge.relayTicket("one", "11111111-1111-4111-8111-111111111111", "host") }
+            assertFailsWith<IllegalStateException> { bridge.preferences("one") }
+            assertFailsWith<IllegalStateException> { bridge.settingsHandoff("one") }
             assertEquals(3, db.calls.size)
+        } finally { bridge.close() }
+    }
+
+    @Test fun `preferences reject a result returned after the host identity changed`() = runBlocking {
+        assertMidRpcIdentityChange { it.preferences("one") }
+    }
+
+    @Test fun `settings handoff rejects a result returned after the host identity changed`() = runBlocking {
+        assertMidRpcIdentityChange { it.settingsHandoff("one") }
+    }
+
+    @Test fun `relay ticket rejects a result returned after the host identity changed`() = runBlocking {
+        assertMidRpcIdentityChange { it.relayTicket("one", "11111111-1111-4111-8111-111111111111", "host") }
+    }
+
+    private suspend fun assertMidRpcIdentityChange(request: suspend (HostAccountSessionBridge) -> String) = coroutineScope {
+        val auth = Auth().apply { currentUser.value = user("one") }
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val db = Database().apply {
+            response = { started.complete(Unit); release.await(); Result.success("old-account-response") }
+        }
+        val bridge = HostAccountSessionBridge(auth, db) {}
+        bridge.start(this)
+        try {
+            val result = async { runCatching { request(bridge) } }
+            started.await()
+            auth.currentUser.value = user("two")
+            release.complete(Unit)
+            val error = assertIs<IllegalStateException>(result.await().exceptionOrNull())
+            assertEquals("Terminal account changed", error.message)
+            assertEquals(1, db.calls.size)
+            assertEquals(JsonPrimitive("one"), db.calls.single().second["p_expected_user_id"])
+        } finally { bridge.close() }
+    }
+
+    @Test fun `relay validates roles and canonical room ids before making an RPC`() = runBlocking {
+        val auth = Auth().apply { currentUser.value = user("one") }
+        val db = Database()
+        val bridge = HostAccountSessionBridge(auth, db) {}
+        bridge.start(this)
+        try {
+            val invalidRole = "sensitive-invalid-role"
+            val roleError = assertFailsWith<IllegalArgumentException> {
+                bridge.relayTicket("one", "11111111-1111-4111-8111-111111111111", invalidRole)
+            }
+            assertEquals("Unsupported terminal relay role", roleError.message)
+            for (invalidRoom in listOf("sensitive-invalid-room", "1-1-1-1-1")) {
+                val roomError = assertFailsWith<IllegalArgumentException> { bridge.relayTicket("one", invalidRoom, "account") }
+                assertEquals("Invalid terminal relay room", roomError.message)
+            }
+            assertTrue(db.calls.isEmpty())
+            bridge.relayTicket("one", "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", "account")
+            assertEquals(JsonPrimitive("account"), db.calls.single().second["p_role"])
+            assertEquals(JsonPrimitive("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), db.calls.single().second["p_room_id"])
         } finally { bridge.close() }
     }
 
@@ -97,6 +154,12 @@ class HostAccountSessionBridgeTest {
             try {
                 assertEquals(AccountState.SignedOut, bridge.state.value)
                 assertFalse(bridge.upsert("one", "{}"))
+                assertFailsWith<IllegalStateException> { bridge.preferences("one") }
+                assertFailsWith<IllegalStateException> { bridge.settingsHandoff("one") }
+                assertFailsWith<IllegalStateException> {
+                    bridge.relayTicket("one", "11111111-1111-4111-8111-111111111111", "host")
+                }
+                assertTrue(database?.calls.orEmpty().isEmpty())
             } finally { bridge.close() }
         }
     }
