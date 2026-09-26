@@ -275,11 +275,11 @@ val pinnedLocalApiJar = provider {
 // closes the host tab from it. Also re-check that SettingsManager still saves
 // synchronously to settings.json under bossterm.settings.dir:
 // applyCollapsedTabStripDefault reads it back right after updateSetting.
-// Includes HostAccountSessions and failed-initialization isolation.
-// FontUtils/ImageRenderer match the 1.2.169 release source except attribution comments.
-val bosstermVersion = "1.2.169"
+// Includes host account isolation, relay tickets and account viewing preferences.
+// FontUtils/ImageRenderer match the published 1.2.170 sources except attribution comments.
+val bosstermVersion = "1.2.170"
 // This source override must be reviewed (or removed) whenever BossTerm changes.
-check(bosstermVersion == "1.2.169") {
+check(bosstermVersion == "1.2.170") {
     "Review the ImageRenderer and FontUtils overrides before upgrading BossTerm"
 }
 

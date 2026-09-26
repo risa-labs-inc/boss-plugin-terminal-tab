@@ -5,6 +5,7 @@ name: Tests
 # pull request, which is what makes it usable as a required status check.
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   push:
     branches: [main]
 

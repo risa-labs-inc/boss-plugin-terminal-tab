@@ -16,6 +16,7 @@ import ai.rever.bossterm.compose.share.AccountAutoShare
 import ai.rever.bossterm.compose.share.AccountSessionDirectory
 import ai.rever.bossterm.compose.share.AccountSessionPublisher
 import ai.rever.bossterm.compose.share.AccountSessionSource
+import ai.rever.bossterm.compose.share.AccountTerminalPreferences
 import ai.rever.bossterm.compose.share.SessionShareManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -159,6 +160,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
                     }
                 }
                 reset("Refresh account identity") { AccountSessionSource.refreshHostIdentity() }
+                reset("Reset account preferences") { AccountTerminalPreferences.Default.resetAccount() }
                 reset("Reset auto sharing") { AccountAutoShare.Default.resetAccount() }
                 reset("Revoke account shares") { SessionShareManager.revokeAccountShares() }
                 reset("Reset account directory") { AccountSessionDirectory.Default.resetAccount() }
@@ -278,6 +280,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
                 host = checkNotNull(AccountSessionSource.host),
             ).also { it.start() }
             AccountAutoShare.Default.start()
+            AccountTerminalPreferences.Default.start()
             AccountSessionDirectory.Default.start()
             AccountAutoRemote.Default.start()
         } catch (t: Throwable) {
@@ -468,6 +471,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
     private fun stopAccountServices() {
         accountCleanup("Stop account viewers") { AccountAutoRemote.Default.stop() }
         accountCleanup("Stop account directory") { AccountSessionDirectory.Default.stop() }
+        accountCleanup("Stop account preferences") { AccountTerminalPreferences.Default.stop() }
         accountCleanup("Stop auto sharing") { AccountAutoShare.Default.stop() }
         // stop() synchronously waits at most 3 seconds for row deletion in BossTerm.
         // Keep the host bridge open until it returns.

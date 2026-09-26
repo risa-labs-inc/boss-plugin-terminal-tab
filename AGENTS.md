@@ -165,9 +165,13 @@ The workflow is defined in `.github/workflows/build.yml` and delegates to the sh
 
 BossConsole owns terminal login. Use host identity and authenticated RPCs; never restore
 BossTerm standalone credentials in the plugin. Before adopting a different user, publish
-SignedOut, stop auto-sharing, revoke share links, clear discovery, and disconnect account
+SignedOut, synchronously reset account viewing preferences, stop auto-sharing, revoke share
+links, clear discovery, and disconnect account
 viewers. Attempt every cleanup step even if one fails; keep sharing signed out on failure
 with bounded retries. After exhaustion, keep the bridge disabled until reload and shut
 down sharing/account services on IO. Preserve coroutine cancellation.
 Account setup and teardown errors must not prevent local terminals or MCP cleanup.
 Publisher stop waits for row deletion with a timeout, before closing the host bridge.
+
+Relay tickets and settings handoffs use the host identity through owner-checked RPCs.
+Account preference reset must stay synchronous, in-memory and free of blocking I/O.
