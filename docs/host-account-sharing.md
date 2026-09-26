@@ -76,7 +76,8 @@ Relay remains disabled by default. For staged debug testing, explicitly set
 (or JVM properties `bossterm.relay.enabled` and `bossterm.relay.url`) on the app.
 Native clients must opt in to the same trusted origin. Existing direct/LAN sharing and
 older links keep their existing behavior. Once relay transport is selected, a connection
-failure does not silently switch to a different transport.
+failure does not silently switch to a different transport. Full deployed native/browser
+rendering and real-network testing remains a production rollout gate.
 
 ## Paired development and CI
 
@@ -96,7 +97,7 @@ For paired local development, use a matching BossTerm checkout:
 library. Use this only for development; release checks must use the published dependency.
 
 Plugin tests cover provider absence, identity changes before and during each new RPC,
-relay input validation, authenticated parameter forwarding, and cleanup ordering. Companion
+relay input validation, authenticated parameter forwarding, and bridge cleanup ordering. Companion
 BossTerm tests cover synchronous preference reset, stale responses, transport admission,
 visibility, revocation, and reconnects. Backend tests cover ownership, settings concurrency,
 one-use handoffs/tickets, and expected-identity rejection.
