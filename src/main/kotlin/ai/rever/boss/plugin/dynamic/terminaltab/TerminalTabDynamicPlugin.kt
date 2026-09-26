@@ -139,11 +139,12 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
                 context.supabaseDataProvider,
                 onFailure = { logAccountFailure("Account transition", it) },
                 onCleanupExhausted = {
-                    // Repeated revocation failure must not leave old-account links live.
-                    // Stop viewers, directory and publisher too; this closes the bridge
-                    // and cancels its collector, so a later login cannot partially re-arm it.
-                    stopAccountServices()
-                    accountCleanup("Shut down sharing after cleanup failure") { SessionShareManager.shutdown() }
+                    // The bridge is already disabled. Tear down on IO so bounded publisher
+                    // cleanup never blocks its collector/Main, and stop serving links first.
+                    context.pluginScope.launch(Dispatchers.IO) {
+                        accountCleanup("Shut down sharing after cleanup failure") { SessionShareManager.shutdown() }
+                        stopAccountServices()
+                    }
                 },
             ) {
                 var failure: Throwable? = null
@@ -463,6 +464,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         }
     }
 
+    @Synchronized
     private fun stopAccountServices() {
         accountCleanup("Stop account viewers") { AccountAutoRemote.Default.stop() }
         accountCleanup("Stop account directory") { AccountSessionDirectory.Default.stop() }

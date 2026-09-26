@@ -167,6 +167,7 @@ BossConsole owns terminal login. Use host identity and authenticated RPCs; never
 BossTerm standalone credentials in the plugin. Before adopting a different user, publish
 SignedOut, stop auto-sharing, revoke share links, clear discovery, and disconnect account
 viewers. Attempt every cleanup step even if one fails; keep sharing signed out on failure
-and retry cleanup on the next host identity event. Preserve coroutine cancellation.
+with bounded retries. After exhaustion, keep the bridge disabled until reload and shut
+down sharing/account services on IO. Preserve coroutine cancellation.
 Account setup and teardown errors must not prevent local terminals or MCP cleanup.
 Publisher stop waits for row deletion with a timeout, before closing the host bridge.
