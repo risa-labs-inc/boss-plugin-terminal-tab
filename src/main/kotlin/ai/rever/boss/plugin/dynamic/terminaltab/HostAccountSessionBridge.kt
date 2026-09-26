@@ -94,6 +94,7 @@ internal class HostAccountSessionBridge(
         check(owns(userId)) { "Terminal account changed" }
         val ownedParameters = buildJsonObject {
             parameters.forEach { (key, value) -> put(key, value) }
+            // Set last so caller parameters cannot override the verified owner.
             put("p_expected_user_id", userId)
         }.toString()
         val result = checkNotNull(database) { "Terminal account unavailable" }

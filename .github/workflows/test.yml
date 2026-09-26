@@ -12,6 +12,8 @@ on:
 # Temporary stacked-PR validation. A draft may compile against the reviewed
 # companion source; ready-for-review PRs and main MUST use the Maven dependency.
 # Remove this path once BossTerm#434 is released and bosstermVersion is updated.
+# Keep this condition in sync with jobs.test.name (job names cannot read workflow env).
+# Renaming this branch intentionally falls back to published-artifact validation.
 env:
   PAIRED_BOSSTERM: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft && github.head_ref == 'feature/terminal-relay' }}
 
@@ -90,7 +92,7 @@ jobs:
         # on Linux and also validate the installable bundled artifact.
         run: |
           if [[ "$PAIRED_BOSSTERM" == "true" ]]; then
-            xvfb-run -a ./.paired-bossterm/gradlew -p . test buildPluginJar --no-daemon \
+            xvfb-run -a bash ./.paired-bossterm/gradlew -p . test buildPluginJar --no-daemon \
               -PbosstermSourceDir="$GITHUB_WORKSPACE/.paired-bossterm"
           else
             xvfb-run -a ./gradlew test buildPluginJar --no-daemon
@@ -106,7 +108,7 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           if [[ "$PAIRED_BOSSTERM" == "true" ]]; then
-            ./.paired-bossterm/gradlew -p . test --tests '*HostAccountSessionBridgeTest' \
+            bash ./.paired-bossterm/gradlew -p . test --tests '*HostAccountSessionBridgeTest' \
               --tests '*OnboardingInstallScriptTest' --tests '*PluginManifestTest' \
               --tests '*SidebarEnvInjectionTest' buildPluginJar --no-daemon \
               -PbosstermSourceDir="$GITHUB_WORKSPACE/.paired-bossterm"

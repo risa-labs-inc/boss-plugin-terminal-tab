@@ -13,10 +13,10 @@ import ai.rever.boss.plugin.dynamic.terminaltab.onboarding.BossTermSetupControll
 import ai.rever.bossterm.compose.settings.SettingsManager
 import ai.rever.bossterm.compose.share.AccountAutoRemote
 import ai.rever.bossterm.compose.share.AccountAutoShare
-import ai.rever.bossterm.compose.share.AccountTerminalPreferences
 import ai.rever.bossterm.compose.share.AccountSessionDirectory
 import ai.rever.bossterm.compose.share.AccountSessionPublisher
 import ai.rever.bossterm.compose.share.AccountSessionSource
+import ai.rever.bossterm.compose.share.AccountTerminalPreferences
 import ai.rever.bossterm.compose.share.SessionShareManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -470,8 +470,8 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
     @Synchronized
     private fun stopAccountServices() {
         accountCleanup("Stop account viewers") { AccountAutoRemote.Default.stop() }
-        accountCleanup("Stop account preferences") { AccountTerminalPreferences.Default.stop() }
         accountCleanup("Stop account directory") { AccountSessionDirectory.Default.stop() }
+        accountCleanup("Stop account preferences") { AccountTerminalPreferences.Default.stop() }
         accountCleanup("Stop auto sharing") { AccountAutoShare.Default.stop() }
         // stop() synchronously waits at most 3 seconds for row deletion in BossTerm.
         // Keep the host bridge open until it returns.
