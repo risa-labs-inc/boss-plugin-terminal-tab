@@ -277,6 +277,9 @@ val pinnedLocalApiJar = provider {
 // applyCollapsedTabStripDefault reads it back right after updateSetting.
 // Includes HostAccountSessions and failed-initialization isolation.
 // FontUtils/ImageRenderer match the 1.2.169 release source except attribution comments.
+// Relay/preferences interfaces are currently supplied by the pinned paired-source
+// draft CI path (BossTerm#434), not this published artifact. Keep release builds
+// on Maven: after the companion release, bump this pin and review the overrides.
 val bosstermVersion = "1.2.169"
 // This source override must be reviewed (or removed) whenever BossTerm changes.
 check(bosstermVersion == "1.2.169") {
