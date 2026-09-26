@@ -160,3 +160,14 @@ Pushes to `main` trigger the release workflow which:
 3. Publishes to the BOSS Plugin Store
 
 The workflow is defined in `.github/workflows/build.yml` and delegates to the shared workflow in `risa-labs-inc/BossConsole-Releases`.
+
+## Host account sharing
+
+BossConsole owns terminal login. Use host identity and authenticated RPCs; never restore
+BossTerm standalone credentials in the plugin. Before adopting a different user, publish
+SignedOut, stop auto-sharing, revoke share links, clear discovery, and disconnect account
+viewers. Attempt every cleanup step even if one fails; keep sharing signed out on failure
+with bounded retries. After exhaustion, keep the bridge disabled until reload and shut
+down sharing/account services on IO. Preserve coroutine cancellation.
+Account setup and teardown errors must not prevent local terminals or MCP cleanup.
+Publisher stop waits for row deletion with a timeout, before closing the host bridge.

@@ -133,7 +133,7 @@ group = "ai.rever.boss.plugin.dynamic"
 // (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.166.md).
 // 2.5.99: auto-bumped bundled BossTerm to 1.2.167
 // (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.167.md).
-version = "2.5.105"
+version = "2.5.106"
 
 java {
     toolchain {
@@ -275,9 +275,11 @@ val pinnedLocalApiJar = provider {
 // closes the host tab from it. Also re-check that SettingsManager still saves
 // synchronously to settings.json under bossterm.settings.dir:
 // applyCollapsedTabStripDefault reads it back right after updateSetting.
-val bosstermVersion = "1.2.167"
+// Includes HostAccountSessions and failed-initialization isolation.
+// FontUtils/ImageRenderer match the 1.2.169 release source except attribution comments.
+val bosstermVersion = "1.2.169"
 // This source override must be reviewed (or removed) whenever BossTerm changes.
-check(bosstermVersion == "1.2.167") {
+check(bosstermVersion == "1.2.169") {
     "Review the ImageRenderer and FontUtils overrides before upgrading BossTerm"
 }
 

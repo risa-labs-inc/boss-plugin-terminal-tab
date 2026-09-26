@@ -69,6 +69,6 @@ jobs:
       # Restricted execution policy, the default on Windows client editions.
       - name: Verify Windows scripts
         if: runner.os == 'Windows'
-        run: ./gradlew test --tests '*OnboardingInstallScriptTest' --tests '*PluginManifestTest' --tests '*SidebarEnvInjectionTest' buildPluginJar --no-daemon
+        run: ./gradlew test --tests '*HostAccountSessionBridgeTest' --tests '*OnboardingInstallScriptTest' --tests '*PluginManifestTest' --tests '*SidebarEnvInjectionTest' buildPluginJar --no-daemon
         env:
           CI: 'true'

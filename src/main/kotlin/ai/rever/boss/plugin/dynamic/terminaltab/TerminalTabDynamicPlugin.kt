@@ -11,6 +11,11 @@ import ai.rever.bossterm.compose.mcp.BossTermMcpManager
 import ai.rever.bossterm.compose.mcp.McpTerminalRegistry
 import ai.rever.boss.plugin.dynamic.terminaltab.onboarding.BossTermSetupController
 import ai.rever.bossterm.compose.settings.SettingsManager
+import ai.rever.bossterm.compose.share.AccountAutoRemote
+import ai.rever.bossterm.compose.share.AccountAutoShare
+import ai.rever.bossterm.compose.share.AccountSessionDirectory
+import ai.rever.bossterm.compose.share.AccountSessionPublisher
+import ai.rever.bossterm.compose.share.AccountSessionSource
 import ai.rever.bossterm.compose.share.SessionShareManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +23,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import java.util.concurrent.ConcurrentHashMap
 
 private val mcpLogger = BossLogger.forComponent("TerminalTabMcp")
@@ -57,6 +65,8 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
     override val url: String = "https://github.com/risa-labs-inc/boss-plugin-terminal-tab"
 
     private var pluginContext: PluginContext? = null
+    private var accountBridge: HostAccountSessionBridge? = null
+    private var accountPublisher: AccountSessionPublisher? = null
 
     /** Whether [HostMcpToolProvider] is registered; decides how [startMcpServer] wires the two host tools. */
     private var hostToolsViaRegistry: Boolean = false
@@ -122,6 +132,48 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         sweepSidebarEnvFiles("start")
 
         pluginContext = context
+        // Install before any BossTerm UI/default singleton can restore a standalone login.
+        try {
+            val bridge = HostAccountSessionBridge(
+                context.authDataProvider,
+                context.supabaseDataProvider,
+                onFailure = { logAccountFailure("Account transition", it) },
+                onCleanupExhausted = {
+                    // The bridge is already disabled. Tear down on IO so bounded publisher
+                    // cleanup never blocks its collector/Main, and stop serving links first.
+                    context.pluginScope.launch(Dispatchers.IO) {
+                        accountCleanup("Shut down sharing after cleanup failure") { SessionShareManager.shutdown() }
+                        stopAccountServices()
+                    }
+                },
+            ) {
+                var failure: Throwable? = null
+                suspend fun reset(name: String, action: suspend () -> Unit) {
+                    try {
+                        action()
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (t: Throwable) {
+                        logAccountFailure(name, t)
+                        if (failure == null) failure = t
+                    }
+                }
+                reset("Refresh account identity") { AccountSessionSource.refreshHostIdentity() }
+                reset("Reset auto sharing") { AccountAutoShare.Default.resetAccount() }
+                reset("Revoke account shares") { SessionShareManager.revokeAccountShares() }
+                reset("Reset account directory") { AccountSessionDirectory.Default.resetAccount() }
+                reset("Disconnect account viewers") { AccountAutoRemote.Default.resetAccount() }
+                failure?.let { throw it }
+            }
+            accountBridge = bridge
+            AccountSessionSource.install(bridge, context.pluginScope)
+            bridge.start(context.pluginScope)
+        } catch (t: Throwable) {
+            logAccountFailure("Initialize account sharing", t)
+            accountCleanup("Close account bridge") { accountBridge?.close() }
+            accountBridge = null
+            accountCleanup("Disconnect account source") { AccountSessionSource.disconnect() }
+        }
         val setupSupervisor = BossTermFluckSupervisor(context)
         TerminalPluginContextHolder.setupSupervisor = setupSupervisor
         val setupStatusItem = BossTermSetupStatusItem()
@@ -196,11 +248,41 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
             applySessionSharingFirstLaunchDefaults()
             SessionShareManager.start()
             wireApprovalNotifications(context)
+            startAccountServices(context)
             mcpLogger.info(LogCategory.TERMINAL, "Session sharing armed", mapOf(
                 "port" to SettingsManager.instance.settings.value.sessionSharingPort
             ))
         } catch (t: Throwable) {
             mcpLogger.warn(LogCategory.TERMINAL, "Failed to start session sharing; terminals still work", error = t)
+        }
+    }
+
+    private fun startAccountServices(context: PluginContext) {
+        if (accountBridge == null) return
+        try {
+            accountPublisher = AccountSessionPublisher(
+                sharedTabIds = SessionShareManager.allSharedTabIds,
+                remoteUrl = SessionShareManager.remoteUrlFlow,
+                accountState = AccountSessionSource.state,
+                // The collector belongs to the plugin, so an unload releases its classloader.
+                enabled = SettingsManager.instance.settings.map { it.publishSessionsToAccount }
+                    .stateIn(context.pluginScope, SharingStarted.Eagerly, SettingsManager.instance.settings.value.publishSessionsToAccount),
+                infoFor = SessionShareManager::infoFor,
+                sessionNameFor = SessionShareManager::sessionNameFor,
+                deviceName = SessionShareManager::defaultSessionName,
+                // Host transport takes precedence; standalone REST arguments are unused.
+                accessToken = { null },
+                restBaseUrl = "host RPC",
+                anonKey = "",
+                appVersion = ai.rever.bossterm.compose.update.Version.CURRENT.toString(),
+                host = checkNotNull(AccountSessionSource.host),
+            ).also { it.start() }
+            AccountAutoShare.Default.start()
+            AccountSessionDirectory.Default.start()
+            AccountAutoRemote.Default.start()
+        } catch (t: Throwable) {
+            logAccountFailure("Start account services", t)
+            stopAccountServices()
         }
     }
 
@@ -369,7 +451,37 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         }
     }
 
+    private fun logAccountFailure(operation: String, failure: Throwable) {
+        // Exception messages can contain bearer URLs or E2E secrets.
+        mcpLogger.warn(LogCategory.TERMINAL, "$operation failed (${failure.javaClass.simpleName})")
+    }
+
+    private inline fun accountCleanup(operation: String, action: () -> Unit) {
+        try {
+            action()
+        } catch (t: Throwable) {
+            logAccountFailure(operation, t)
+        }
+    }
+
+    @Synchronized
+    private fun stopAccountServices() {
+        accountCleanup("Stop account viewers") { AccountAutoRemote.Default.stop() }
+        accountCleanup("Stop account directory") { AccountSessionDirectory.Default.stop() }
+        accountCleanup("Stop auto sharing") { AccountAutoShare.Default.stop() }
+        // stop() synchronously waits at most 3 seconds for row deletion in BossTerm.
+        // Keep the host bridge open until it returns.
+        accountCleanup("Stop account publisher") { accountPublisher?.stop() }
+        accountPublisher = null
+        accountCleanup("Close account bridge") { accountBridge?.close() }
+        accountBridge = null
+        accountCleanup("Disconnect account source") { AccountSessionSource.disconnect() }
+    }
+
     override fun dispose() {
+        stopAccountServices()
+        // disconnect() detaches the transport but retains the signed-out host facade.
+        // A still-composing old terminal never falls back to standalone credentials.
         // Stop session sharing (idempotent; tears down the share server and
         // tunnels) and clear any approval toasts still on screen. The
         // pendingRequests collector dies with pluginScope cancellation.
