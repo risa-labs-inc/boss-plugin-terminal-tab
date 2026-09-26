@@ -15,7 +15,7 @@ restore the previous account's settings afterward.
 The old account's registry rows may remain visible until their 90-second heartbeat timeout;
 their links are already invalid. Explicitly ending a share or unloading while signed in
 removes this process's rows through the host. Cleanup attempts every step even if another
-step fails; sharing stays signed out and retries cleanup on the next identity event.
+step fails; sharing stays signed out during bounded retries even without a new login event.
 Errors log only operation names and exception types, never bearer URLs or RPC payloads.
 
 Missing auth/database providers leave account sharing signed out; local terminals still
@@ -60,14 +60,16 @@ Old backends or temporary failures retain safe defaults or that account's own ca
    and the `user-settings` Edge Function with its configured session secret/public URL.
 3. Relay admission additionally requires `20260927010000_terminal_relay_tickets.sql`
    and the Cloudflare Worker/Durable Object under `infra/cloudflare/terminal-relay` in
-   BossConsole. Configure its backend service credential only on the server.
+   BossConsole. Production uses the `relay-admission` Edge gateway with a single-purpose
+   HMAC credential on the Worker; database credentials remain inside Supabase. Apply the
+   bounded cleanup migration and schedule its cleanup RPC. The HTTP conflict follow-up
+   migration makes stale settings saves return 409 instead of a retryable server error.
    These new prerequisites are separate from the earlier account-sharing migration;
    building this plugin does not deploy them.
-4. Release the companion BossTerm change, update this plugin's `bosstermVersion`, and
-   review the guarded FontUtils/ImageRenderer overrides before releasing the plugin.
-   BossTerm **1.2.169 contains the original host-account bridge but does not contain the
-   new relay/preferences APIs**. No new host plugin API or BossConsole binary is required
-   for these additions; the updated library is bundled privately inside the plugin.
+4. BossTerm **1.2.170** contains the host-account, relay and preference APIs. CI and
+   release builds use this published Maven artifact. FontUtils/ImageRenderer overrides
+   were compared with its source JAR and differ only in attribution comments. No new host
+   plugin API or BossConsole binary is required; the library is bundled inside the plugin.
 
 Relay remains disabled by default. For staged debug testing, explicitly set
 `BOSSTERM_RELAY_ENABLED=true` and `BOSSTERM_RELAY_URL=wss://<trusted-relay-origin>`
@@ -78,12 +80,9 @@ failure does not silently switch to a different transport.
 
 ## Paired development and CI
 
-This draft is stacked on the host-account-sharing plugin change and BossTerm#434.
-The draft-only path in [test.yml](../.github/workflows/test.yml) checks out an immutable
-BossTerm revision and uses that checkout's compatible Gradle wrapper. Its job names and
-summary explicitly identify paired-source validation. Ready-for-review PRs, main, and
-release builds continue using the declared published Maven dependency without substitution.
-A passing draft job therefore does not establish release readiness against BossTerm 1.2.169.
+CI and release builds resolve the declared Maven dependency without source substitution.
+The temporary paired-source checkout has been removed. The optional local composite build
+remains available for library/plugin development.
 
 For paired local development, use a matching BossTerm checkout:
 
@@ -94,8 +93,7 @@ For paired local development, use a matching BossTerm checkout:
 ```
 
 `bosstermSourceDir` may also be absolute. The resulting local JAR bundles the modified
-library. Keep the draft CI source pin aligned with the reviewed companion commit; after
-that change is published, bump the real Maven version and remove the temporary CI path.
+library. Use this only for development; release checks must use the published dependency.
 
 Plugin tests cover provider absence, identity changes before and during each new RPC,
 relay input validation, authenticated parameter forwarding, and cleanup ordering. Companion

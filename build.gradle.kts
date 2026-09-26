@@ -276,7 +276,7 @@ val pinnedLocalApiJar = provider {
 // synchronously to settings.json under bossterm.settings.dir:
 // applyCollapsedTabStripDefault reads it back right after updateSetting.
 // Includes host account isolation, relay tickets and account viewing preferences.
-// Recheck FontUtils/ImageRenderer against the published artifact before release.
+// FontUtils/ImageRenderer match the published 1.2.170 sources except attribution comments.
 val bosstermVersion = "1.2.170"
 // This source override must be reviewed (or removed) whenever BossTerm changes.
 check(bosstermVersion == "1.2.170") {
