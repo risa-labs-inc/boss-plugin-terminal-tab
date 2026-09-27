@@ -31,6 +31,17 @@ private val logger = BossLogger.forComponent("TerminalStateRegistries")
 object TabbedTerminalStateRegistry {
     private val states = java.util.concurrent.ConcurrentHashMap<String, TabbedTerminalState>()
 
+    private val titleBarTerminals = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    fun markTitleBarTerminal(windowId: String, terminalId: String) {
+        titleBarTerminals[windowId] = terminalId
+    }
+
+    fun titleBarTabId(windowId: String): String? {
+        val recent = titleBarTerminals[windowId]?.let { get(windowId, it)?.activeTabId }
+        return recent ?: states.entries.firstOrNull { it.key.startsWith("$windowId:") }?.value?.activeTabId
+    }
+
     private val _resetGeneration = MutableStateFlow(0)
     val resetGeneration: StateFlow<Int> = _resetGeneration.asStateFlow()
 
@@ -60,6 +71,7 @@ object TabbedTerminalStateRegistry {
     fun contains(windowId: String, terminalId: String): Boolean = states.containsKey(key(windowId, terminalId))
 
     fun removeAllForWindow(windowId: String): Int {
+        titleBarTerminals.remove(windowId)
         val prefix = "$windowId:"
         val keysToRemove = states.keys.filter { it.startsWith(prefix) }
         keysToRemove.forEach { key ->

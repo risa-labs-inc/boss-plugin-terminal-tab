@@ -19,6 +19,7 @@ import androidx.compose.material.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -39,7 +40,7 @@ private val logger = BossLogger.forComponent("TerminalComposables")
  * Boss. Renames the button, the shortcut hint and the tooltip — not the voice
  * agent's own name, which it takes from its instructions.
  */
-private const val CALL_LABEL = "Call Boss"
+internal const val CALL_LABEL = "Call Boss"
 
 /**
  * Tabbed terminal content for the sidebar panel.
@@ -185,6 +186,8 @@ internal fun PersistentTabbedTerminalContentImpl(
     // (sidebar / dialog / embedded), preserving existing behavior.
     val isPanelActive = LocalIsPanelActive.current
 
+    SideEffect { if (isPanelActive) TabbedTerminalStateRegistry.markTitleBarTerminal(windowId, terminalId) }
+
     val isNew = !TabbedTerminalStateRegistry.contains(windowId, terminalId)
     val state = remember(terminalId, resetGeneration) { TabbedTerminalStateRegistry.getOrCreate(windowId, terminalId) }
     val effectiveWorkingDir = if (isNew) workingDirectory else null
@@ -256,7 +259,7 @@ internal fun PersistentTabbedTerminalContentImpl(
               CompositionLocalProvider(LocalBossTermMcpConfig provides TerminalMcpConfigHolder.config) {
                 TabbedTerminal(
                     state = state,
-                    headerContent = terminalTitleBarHeader(windowId, isPanelActive),
+                    headerContent = terminalTitleBarHeader(windowId),
                     initialCommand = normalizedInitialCommand,
                     workingDirectory = effectiveWorkingDir,
                     isActive = isPanelActive,

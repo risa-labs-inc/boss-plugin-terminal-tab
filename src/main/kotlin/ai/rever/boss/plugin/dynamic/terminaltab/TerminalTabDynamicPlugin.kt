@@ -224,6 +224,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         startMcpServer()
 
         startSessionSharing(context)
+        ai.rever.boss.plugin.ui.TerminalTitleBarBridge.registerProvider(this) { windowId -> TerminalWindowControls(windowId) }
     }
 
     /**
@@ -483,6 +484,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
     }
 
     override fun dispose() {
+        ai.rever.boss.plugin.ui.TerminalTitleBarBridge.unregisterProvider(this)
         stopAccountServices()
         // disconnect() detaches the transport but retains the signed-out host facade.
         // A still-composing old terminal never falls back to standalone credentials.

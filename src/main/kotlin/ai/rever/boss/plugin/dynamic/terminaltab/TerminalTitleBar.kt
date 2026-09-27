@@ -2,28 +2,38 @@ package ai.rever.boss.plugin.dynamic.terminaltab
 
 import ai.rever.boss.plugin.ui.TerminalTitleBarAction
 import ai.rever.boss.plugin.ui.TerminalTitleBarBridge
-import ai.rever.bossterm.compose.window.HostedStatusActions
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.size
+import ai.rever.bossterm.compose.mcp.LocalBossTermMcpConfig
+import ai.rever.bossterm.compose.window.HostedTerminalControls
 import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 
+private class TitleBarOwner { var live = true }
+
+/** Lives with the host window, including when no terminal tab is composed. */
+@Composable
+internal fun TerminalWindowControls(windowId: String) {
+    val owner = remember { TitleBarOwner() }
+    DisposableEffect(owner) {
+        onDispose {
+            owner.live = false
+            TerminalTitleBarBridge.remove(owner)
+        }
+    }
+    CompositionLocalProvider(LocalBossTermMcpConfig provides TerminalMcpConfigHolder.config) {
+        HostedTerminalControls(
+            activeTabId = { TabbedTerminalStateRegistry.titleBarTabId(windowId) },
+            callLabel = CALL_LABEL,
+            voiceToolSource = BossVoiceTools.source,
+            onActions = { actions ->
+                if (owner.live) TerminalTitleBarBridge.publish(windowId, owner, true,
+                    actions.map { TerminalTitleBarAction(it.id, it.label, it.symbol, it.icon, it.active, it.onClick) })
+            },
+        )
+    }
+}
+
+/** The window owns the controls; suppress the terminal's duplicate floating strip. */
 @Composable
 internal fun terminalTitleBarHeader(
     windowId: String,
-    active: Boolean,
-): (@Composable (@Composable () -> Unit, @Composable () -> Unit) -> Unit)? {
-    if (!TerminalTitleBarBridge.isHosted(windowId)) return null
-    val owner = remember { Any() }
-    var actions by remember { mutableStateOf(emptyList<TerminalTitleBarAction>()) }
-    SideEffect { TerminalTitleBarBridge.publish(windowId, owner, active, actions) }
-    DisposableEffect(owner) { onDispose { TerminalTitleBarBridge.remove(owner) } }
-    return { status, _ ->
-        Box(Modifier.size(0.dp)) {
-            HostedStatusActions(onActions = { updated ->
-                actions = updated.map { TerminalTitleBarAction(it.id, it.label, it.symbol, it.icon, it.active, it.onClick) }
-            }, content = status)
-        }
-    }
-}
+): (@Composable (@Composable () -> Unit, @Composable () -> Unit) -> Unit)? =
+    if (TerminalTitleBarBridge.isHosted(windowId)) { _, _ -> } else null
