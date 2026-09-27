@@ -256,6 +256,7 @@ internal fun PersistentTabbedTerminalContentImpl(
               CompositionLocalProvider(LocalBossTermMcpConfig provides TerminalMcpConfigHolder.config) {
                 TabbedTerminal(
                     state = state,
+                    headerContent = terminalTitleBarHeader(windowId, isPanelActive),
                     initialCommand = normalizedInitialCommand,
                     workingDirectory = effectiveWorkingDir,
                     isActive = isPanelActive,
