@@ -14,7 +14,11 @@ class PluginManifestTest {
     fun `hosted controls require the host release containing the bridge`() {
         val resource = assertNotNull(javaClass.classLoader.getResource("META-INF/boss-plugin/plugin.json"))
         val manifest = Json.parseToJsonElement(resource.readText()).jsonObject
-        assertEquals("9.5.30", assertNotNull(manifest["minBossVersion"]).jsonPrimitive.content)
+        val minimum = assertNotNull(manifest["minBossVersion"]).jsonPrimitive.content
+        val parts = minimum.split('.').map(String::toInt)
+        assertEquals(3, parts.size)
+        val difference = parts.zip(listOf(9, 5, 30)).firstOrNull { (actual, required) -> actual != required }
+        assertTrue(difference == null || difference.first > difference.second, "Host must include the titlebar bridge")
     }
 
     @Test

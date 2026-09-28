@@ -37,6 +37,7 @@ internal fun TerminalWindowControls(windowId: String) {
                     TerminalTitleBarBridge.publish(
                         windowId = windowId,
                         owner = owner,
+                        // Eligible across all selected tab types; this is not window keyboard focus.
                         active = true,
                         actions = actions.map {
                             TerminalTitleBarAction(it.id, it.label, it.symbol, it.icon, it.active, it.onClick)

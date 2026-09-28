@@ -284,7 +284,9 @@ check(bosstermVersion == "1.2.173") {
 }
 
 repositories {
-    if (providers.gradleProperty("useLocalBossTerm").orNull == "true") mavenLocal()
+    if (providers.gradleProperty("useLocalBossTerm").orNull == "true") {
+        mavenLocal { content { includeGroup("com.risaboss") } }
+    }
     google()
     mavenCentral()
     maven("https://maven.pkg.jetbrains.space/public/p/compose/dev")

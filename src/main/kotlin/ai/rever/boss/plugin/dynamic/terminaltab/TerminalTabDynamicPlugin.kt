@@ -226,7 +226,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
 
         startSessionSharing(context)
         runCatching { TerminalTitleBarBridge.registerProvider(this) { windowId -> TerminalWindowControls(windowId) } }
-            .onFailure { mcpLogger.warn(LogCategory.TERMINAL, "Could not register optional titlebar controls", error = it) }
+            .onFailure { mcpLogger.warn(LogCategory.TERMINAL, "Could not register hosted titlebar controls", error = it) }
     }
 
     /**
@@ -488,7 +488,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
 
     override fun dispose() {
         runCatching { TerminalTitleBarBridge.unregisterProvider(this) }
-            .onFailure { mcpLogger.warn(LogCategory.TERMINAL, "Could not unregister optional titlebar controls", error = it) }
+            .onFailure { mcpLogger.warn(LogCategory.TERMINAL, "Could not unregister hosted titlebar controls", error = it) }
         stopAccountServices()
         // disconnect() detaches the transport but retains the signed-out host facade.
         // A still-composing old terminal never falls back to standalone credentials.
