@@ -8,6 +8,7 @@ import ai.rever.bossterm.compose.settings.theme.ColorPalette
 import ai.rever.bossterm.compose.settings.theme.ColorPaletteManager
 import ai.rever.bossterm.compose.settings.theme.Theme
 import ai.rever.bossterm.compose.settings.theme.ThemeManager
+import androidx.compose.material.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.graphics.Color
@@ -48,10 +49,12 @@ fun ApplyHostThemeToTerminal() {
     val error = BossThemeColors.ErrorColor
     val success = BossThemeColors.SuccessColor
     val warning = BossThemeColors.WarningColor
+    // Read the enclosing host theme before BossTerm installs its own MaterialTheme.
+    val liquidGlass = MaterialTheme.colors.background.alpha < 1f
 
-    LaunchedEffect(background, foreground, accent, data, error, success, warning, textSecondary) {
+    LaunchedEffect(background, foreground, accent, data, error, success, warning, textSecondary, liquidGlass) {
         val theme =
-            buildTerminalTheme(background, foreground, accent, data, error, success, warning, textSecondary)
+            buildTerminalTheme(background, foreground, accent, data, error, success, warning, textSecondary, liquidGlass)
         // Both ways this can go wrong — a floor that matches nothing, and a floor
         // that matches the wrong thing — are silent: the terminal just looks
         // slightly off. One line turns "why does Blueprint look like Operator?"
@@ -93,7 +96,8 @@ internal fun curatedBossThemeFor(floor: String): Theme? =
 /**
  * Builds a terminal [Theme] from the active host chrome colors.
  *
- * A hand-authored **BOSS** builtin beats synthesis, so BOSS Blueprint and BOSS
+ * Active host glass uses BossTerm's Liquid Glass light/dark builtin. Otherwise,
+ * a hand-authored **BOSS** builtin beats synthesis, so BOSS Blueprint and BOSS
  * Operator get their real ANSI 16 and their exact
  * [ai.rever.bossterm.compose.settings.theme.UiTheme] chrome instead of a derived
  * approximation. Matching is on the floor: a host theme and its terminal
@@ -125,7 +129,17 @@ internal fun buildTerminalTheme(
     success: Color,
     warning: Color,
     textSecondary: Color,
+    liquidGlass: Boolean = false,
 ): Theme {
+    // Glass shares Blueprint floors, so resolve its explicit signal before floor matching.
+    // Reuse the bundled theme intact, including ANSI, selection and UI colors.
+    if (liquidGlass) {
+        return if (background.luminance() > 0.5f) {
+            BuiltinThemes.LIQUID_GLASS_LIGHT
+        } else {
+            BuiltinThemes.LIQUID_GLASS_DARK
+        }
+    }
     val floor = hex(background)
     curatedBossThemeFor(floor)?.let { return it }
 

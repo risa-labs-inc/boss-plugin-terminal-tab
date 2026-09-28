@@ -205,3 +205,7 @@ LocalWindowGlassMode rather than changing SettingsManager or fading the whole te
 wrapper surface transparent in glass mode so the host applies its tint once; opaque hosts and
 sidebar-only glass retain the terminal's normal background. This uses the existing API 1.0.95 and
 BossTerm 1.2.173 contracts. Local testing targets ~/.boss_debug/plugins, not the production directory.
+
+Active host glass also makes `HostTerminalThemeBridge` choose BossTerm’s bundled Liquid Glass
+Light/Dark theme before matching background colors, since Liquid Glass shares Blueprint’s floor.
+Use the builtin intact for ANSI, selection and chrome colors; host tint still owns transparency.
