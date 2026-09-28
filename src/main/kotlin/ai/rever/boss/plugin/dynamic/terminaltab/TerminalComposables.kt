@@ -118,7 +118,10 @@ internal fun TabbedTerminalContentImpl(
             }
 
             KeyboardShortcutInterceptorWrapper(windowId = windowId) {
-              CompositionLocalProvider(LocalBossTermMcpConfig provides TerminalMcpConfigHolder.config) {
+              CompositionLocalProvider(
+                  LocalBossTermMcpConfig provides TerminalMcpConfigHolder.config,
+                  ai.rever.bossterm.compose.window.LocalCallBarHosted provides ai.rever.boss.plugin.ui.TerminalTitleBarBridge.isHosted(windowId),
+              ) {
                 TabbedTerminal(
                     state = state,
                     initialCommand = normalizedPendingCommand,
@@ -256,7 +259,10 @@ internal fun PersistentTabbedTerminalContentImpl(
             }
 
             KeyboardShortcutInterceptorWrapper(windowId = windowId) {
-              CompositionLocalProvider(LocalBossTermMcpConfig provides TerminalMcpConfigHolder.config) {
+              CompositionLocalProvider(
+                  LocalBossTermMcpConfig provides TerminalMcpConfigHolder.config,
+                  ai.rever.bossterm.compose.window.LocalCallBarHosted provides ai.rever.boss.plugin.ui.TerminalTitleBarBridge.isHosted(windowId),
+              ) {
                 TabbedTerminal(
                     state = state,
                     headerContent = terminalTitleBarHeader(windowId),

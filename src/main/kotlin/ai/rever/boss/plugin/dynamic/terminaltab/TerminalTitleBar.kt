@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.ui.TerminalTitleBarAction
 import ai.rever.boss.plugin.ui.TerminalTitleBarBridge
 import ai.rever.bossterm.compose.mcp.LocalBossTermMcpConfig
 import ai.rever.bossterm.compose.window.HostedTerminalControls
+import ai.rever.bossterm.compose.window.HostedCallBar
 import androidx.compose.runtime.*
 
 private class TitleBarOwner { var live = true }
@@ -19,6 +20,10 @@ internal fun TerminalWindowControls(windowId: String) {
         }
     }
     CompositionLocalProvider(LocalBossTermMcpConfig provides TerminalMcpConfigHolder.config) {
+        HostedCallBar { bar ->
+            DisposableEffect(owner) { onDispose { TerminalTitleBarBridge.removeCallBar(owner) } }
+            SideEffect { TerminalTitleBarBridge.publishCallBar(windowId, owner, bar) }
+        }
         HostedTerminalControls(
             activeTabId = { TabbedTerminalStateRegistry.titleBarTabId(windowId) },
             callLabel = CALL_LABEL,
