@@ -352,6 +352,11 @@ class BossVoiceToolSourceTest {
     }
 
     @Test
+    fun `host updater tools are not reserved by the embedded terminal`() {
+        assertTrue(RESERVED_TOOL_NAMES.none { it.startsWith("app_update_") })
+    }
+
+    @Test
     fun `the ceiling is derived from the budget rather than written down`() {
         assertEquals(
             BossVoiceToolSource.MAX_ADVERTISED_TOOLS - bossTermOwnToolNames.size,

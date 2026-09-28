@@ -50,7 +50,9 @@ internal val bossTermOwnToolNames: Set<String> = (
     BossTermMcpServer.BUILT_IN_READ_TOOLS +
         BossTermMcpServer.BUILT_IN_WRITE_TOOLS +
         BossTermMcpServer.UNDISABLABLE_TOOLS
-    ).toSet()
+    ).filterNot { it.startsWith("app_update_") }.toSet()
+// App-update tools are standalone-only in BossTerm; this embedder deliberately leaves
+// appUpdateToolsEnabled false. BossConsole owns these names through its host registry.
 
 /**
  * Tool names owned by BossTerm ([bossTermOwnToolNames]) and by this plugin's

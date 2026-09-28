@@ -14,6 +14,7 @@ import ai.rever.bossterm.compose.settings.TerminalSettingsOverride
 import ai.rever.bossterm.compose.share.SessionShareManager
 import ai.rever.boss.plugin.api.LocalIsPanelActive
 import ai.rever.boss.plugin.api.LocalWindowIdProvider
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.Surface
 import androidx.compose.runtime.Composable
@@ -26,6 +27,9 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import ai.rever.boss.plugin.ui.TerminalTitleBarBridge
+import ai.rever.bossterm.compose.window.LocalCallBarHosted
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -39,7 +43,7 @@ private val logger = BossLogger.forComponent("TerminalComposables")
  * Boss. Renames the button, the shortcut hint and the tooltip — not the voice
  * agent's own name, which it takes from its instructions.
  */
-private const val CALL_LABEL = "Call Boss"
+internal const val CALL_LABEL = "Call Boss"
 
 /**
  * Tabbed terminal content for the sidebar panel.
@@ -109,7 +113,9 @@ internal fun TabbedTerminalContentImpl(
 
     key(resetGeneration) {
         Surface(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize()
+                .onFocusChanged { if (it.hasFocus) TabbedTerminalStateRegistry.markTitleBarTerminal(windowId, SIDEBAR_TERMINAL_ID) }
+                .focusGroup(),
             color = settings.defaultBackgroundColor
         ) {
             val normalizedPendingCommand = pendingCommand?.command?.let { command ->
@@ -117,9 +123,13 @@ internal fun TabbedTerminalContentImpl(
             }
 
             KeyboardShortcutInterceptorWrapper(windowId = windowId) {
-              CompositionLocalProvider(LocalBossTermMcpConfig provides TerminalMcpConfigHolder.config) {
+              CompositionLocalProvider(
+                  LocalBossTermMcpConfig provides TerminalMcpConfigHolder.config,
+                  LocalCallBarHosted provides TerminalTitleBarBridge.isHosted(windowId),
+              ) {
                 TabbedTerminal(
                     state = state,
+                    headerContent = terminalTitleBarHeader(windowId),
                     initialCommand = normalizedPendingCommand,
                     workingDirectory = effectiveWorkingDir,
                     settingsOverride = sidebarSettings,
@@ -238,7 +248,9 @@ internal fun PersistentTabbedTerminalContentImpl(
 
     key(resetGeneration) {
         Surface(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize()
+                .onFocusChanged { if (it.hasFocus) TabbedTerminalStateRegistry.markTitleBarTerminal(windowId, terminalId) }
+                .focusGroup(),
             color = settings.defaultBackgroundColor
         ) {
             val normalizedInitialCommand = if (isNew) {
@@ -253,9 +265,13 @@ internal fun PersistentTabbedTerminalContentImpl(
             }
 
             KeyboardShortcutInterceptorWrapper(windowId = windowId) {
-              CompositionLocalProvider(LocalBossTermMcpConfig provides TerminalMcpConfigHolder.config) {
+              CompositionLocalProvider(
+                  LocalBossTermMcpConfig provides TerminalMcpConfigHolder.config,
+                  LocalCallBarHosted provides TerminalTitleBarBridge.isHosted(windowId),
+              ) {
                 TabbedTerminal(
                     state = state,
+                    headerContent = terminalTitleBarHeader(windowId),
                     initialCommand = normalizedInitialCommand,
                     workingDirectory = effectiveWorkingDir,
                     isActive = isPanelActive,
