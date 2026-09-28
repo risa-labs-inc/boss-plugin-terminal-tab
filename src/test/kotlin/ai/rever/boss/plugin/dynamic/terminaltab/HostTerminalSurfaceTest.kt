@@ -1,6 +1,7 @@
 package ai.rever.boss.plugin.dynamic.terminaltab
 
 import ai.rever.bossterm.compose.window.LocalNativeWindowGlass
+import ai.rever.bossterm.compose.window.LocalWindowGlassTint
 import ai.rever.bossterm.compose.window.LocalWindowGlassMode
 import ai.rever.bossterm.compose.window.WindowGlassMode
 import androidx.compose.foundation.background
@@ -31,15 +32,18 @@ class HostTerminalSurfaceTest {
         val alpha = mutableStateOf(1f)
         var nativeGlass = false
         var mode = WindowGlassMode.OFF
+        var tint = 1f
         setContent {
             MaterialTheme(colors = darkColors(background = Color.White.copy(alpha = alpha.value))) {
                 Box(Modifier.size(48.dp).background(Color.Red).testTag("surface")) {
                     HostTerminalSurface(Modifier.fillMaxSize(), color = Color.Black) {
                         val currentGlass = LocalNativeWindowGlass.current
                         val currentMode = LocalWindowGlassMode.current
+                        val currentTint = LocalWindowGlassTint.current
                         SideEffect {
                             nativeGlass = currentGlass
                             mode = currentMode
+                            tint = currentTint
                         }
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Box(Modifier.size(8.dp).background(Color.Green))
@@ -55,6 +59,7 @@ class HostTerminalSurfaceTest {
             runOnIdle {
                 assertEquals(installed, nativeGlass)
                 assertEquals(expectedMode, mode)
+                assertEquals(if (installed) 0f else 1f, tint)
             }
         }
         verify(Color.Black, false, WindowGlassMode.OFF)

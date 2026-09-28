@@ -32,7 +32,8 @@ internal fun HostTerminalSurface(
     CompositionLocalProvider(
         LocalNativeWindowGlass provides glass,
         LocalWindowGlassMode provides if (glass) WindowGlassMode.WINDOW else WindowGlassMode.OFF,
-        LocalWindowGlassTint provides hostBackground.alpha,
+        // The host already paints the shared fill beneath the terminal AND its sidebar.
+        LocalWindowGlassTint provides if (glass) 0f else 1f,
     ) {
         Surface(modifier = modifier, color = if (glass) Color.Transparent else color, content = content)
     }
