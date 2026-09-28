@@ -195,3 +195,13 @@ For local dependency validation, use `-PuseLocalBossTerm=true` and
 `-PbossPluginApiPath=/absolute/path/to/boss-plugin-api`. Maven-local artifacts may
 shadow releases: validate the published BossTerm 1.2.173 artifact and source overrides
 before release. Do not publish a local development artifact to remote repositories.
+
+## Host liquid-glass surfaces
+
+`HostTerminalSurface` reads the enclosing MaterialTheme background alpha before entering BossTerm.
+BossConsole supplies a translucent content background only when native glass is installed and its
+coverage includes app surfaces. Bridge that into BossTerm's existing LocalNativeWindowGlass and
+LocalWindowGlassMode rather than changing SettingsManager or fading the whole terminal. Keep the
+wrapper surface transparent in glass mode so the host applies its tint once; opaque hosts and
+sidebar-only glass retain the terminal's normal background. This uses the existing API 1.0.95 and
+BossTerm 1.2.173 contracts. Local testing targets ~/.boss_debug/plugins, not the production directory.

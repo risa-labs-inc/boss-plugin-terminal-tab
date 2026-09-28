@@ -16,7 +16,6 @@ import ai.rever.boss.plugin.api.LocalIsPanelActive
 import ai.rever.boss.plugin.api.LocalWindowIdProvider
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -112,7 +111,7 @@ internal fun TabbedTerminalContentImpl(
     }
 
     key(resetGeneration) {
-        Surface(
+        HostTerminalSurface(
             modifier = Modifier.fillMaxSize()
                 .onFocusChanged { if (it.hasFocus) TabbedTerminalStateRegistry.markTitleBarTerminal(windowId, SIDEBAR_TERMINAL_ID) }
                 .focusGroup(),
@@ -247,7 +246,7 @@ internal fun PersistentTabbedTerminalContentImpl(
     }
 
     key(resetGeneration) {
-        Surface(
+        HostTerminalSurface(
             modifier = Modifier.fillMaxSize()
                 .onFocusChanged { if (it.hasFocus) TabbedTerminalStateRegistry.markTitleBarTerminal(windowId, terminalId) }
                 .focusGroup(),
@@ -338,7 +337,7 @@ internal fun TerminalContentImpl(
     val (isNew, state) = terminalState
 
     key(resetGeneration) {
-        Surface(
+        HostTerminalSurface(
             modifier = Modifier.fillMaxSize(),
             color = settings.defaultBackgroundColor
         ) {
