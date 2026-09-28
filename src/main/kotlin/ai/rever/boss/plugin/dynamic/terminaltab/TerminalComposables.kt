@@ -14,12 +14,12 @@ import ai.rever.bossterm.compose.settings.TerminalSettingsOverride
 import ai.rever.bossterm.compose.share.SessionShareManager
 import ai.rever.boss.plugin.api.LocalIsPanelActive
 import ai.rever.boss.plugin.api.LocalWindowIdProvider
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -27,6 +27,9 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import ai.rever.boss.plugin.ui.TerminalTitleBarBridge
+import ai.rever.bossterm.compose.window.LocalCallBarHosted
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -110,7 +113,9 @@ internal fun TabbedTerminalContentImpl(
 
     key(resetGeneration) {
         Surface(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize()
+                .onFocusChanged { if (it.hasFocus) TabbedTerminalStateRegistry.markTitleBarTerminal(windowId, SIDEBAR_TERMINAL_ID) }
+                .focusGroup(),
             color = settings.defaultBackgroundColor
         ) {
             val normalizedPendingCommand = pendingCommand?.command?.let { command ->
@@ -120,10 +125,11 @@ internal fun TabbedTerminalContentImpl(
             KeyboardShortcutInterceptorWrapper(windowId = windowId) {
               CompositionLocalProvider(
                   LocalBossTermMcpConfig provides TerminalMcpConfigHolder.config,
-                  ai.rever.bossterm.compose.window.LocalCallBarHosted provides ai.rever.boss.plugin.ui.TerminalTitleBarBridge.isHosted(windowId),
+                  LocalCallBarHosted provides TerminalTitleBarBridge.isHosted(windowId),
               ) {
                 TabbedTerminal(
                     state = state,
+                    headerContent = terminalTitleBarHeader(windowId),
                     initialCommand = normalizedPendingCommand,
                     workingDirectory = effectiveWorkingDir,
                     settingsOverride = sidebarSettings,
@@ -189,8 +195,6 @@ internal fun PersistentTabbedTerminalContentImpl(
     // (sidebar / dialog / embedded), preserving existing behavior.
     val isPanelActive = LocalIsPanelActive.current
 
-    SideEffect { if (isPanelActive) TabbedTerminalStateRegistry.markTitleBarTerminal(windowId, terminalId) }
-
     val isNew = !TabbedTerminalStateRegistry.contains(windowId, terminalId)
     val state = remember(terminalId, resetGeneration) { TabbedTerminalStateRegistry.getOrCreate(windowId, terminalId) }
     val effectiveWorkingDir = if (isNew) workingDirectory else null
@@ -244,7 +248,9 @@ internal fun PersistentTabbedTerminalContentImpl(
 
     key(resetGeneration) {
         Surface(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize()
+                .onFocusChanged { if (it.hasFocus) TabbedTerminalStateRegistry.markTitleBarTerminal(windowId, terminalId) }
+                .focusGroup(),
             color = settings.defaultBackgroundColor
         ) {
             val normalizedInitialCommand = if (isNew) {
@@ -261,7 +267,7 @@ internal fun PersistentTabbedTerminalContentImpl(
             KeyboardShortcutInterceptorWrapper(windowId = windowId) {
               CompositionLocalProvider(
                   LocalBossTermMcpConfig provides TerminalMcpConfigHolder.config,
-                  ai.rever.bossterm.compose.window.LocalCallBarHosted provides ai.rever.boss.plugin.ui.TerminalTitleBarBridge.isHosted(windowId),
+                  LocalCallBarHosted provides TerminalTitleBarBridge.isHosted(windowId),
               ) {
                 TabbedTerminal(
                     state = state,

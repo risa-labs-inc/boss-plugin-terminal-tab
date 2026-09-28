@@ -31,15 +31,14 @@ private val logger = BossLogger.forComponent("TerminalStateRegistries")
 object TabbedTerminalStateRegistry {
     private val states = java.util.concurrent.ConcurrentHashMap<String, TabbedTerminalState>()
 
-    private val titleBarTerminals = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val titleBarTerminals = TitleBarTerminalSelection()
 
     fun markTitleBarTerminal(windowId: String, terminalId: String) {
-        titleBarTerminals[windowId] = terminalId
+        titleBarTerminals.focus(windowId, terminalId)
     }
 
     fun titleBarTabId(windowId: String): String? {
-        val recent = titleBarTerminals[windowId]?.let { get(windowId, it)?.activeTabId }
-        return recent ?: states.entries.firstOrNull { it.key.startsWith("$windowId:") }?.value?.activeTabId
+        return titleBarTerminals.selected(windowId)?.let { get(windowId, it)?.activeTabId }
     }
 
     private val _resetGeneration = MutableStateFlow(0)
@@ -60,6 +59,7 @@ object TabbedTerminalStateRegistry {
     fun get(windowId: String, terminalId: String): TabbedTerminalState? = states[key(windowId, terminalId)]
 
     fun remove(windowId: String, terminalId: String) {
+        titleBarTerminals.remove(windowId, terminalId)
         // Unregister from the MCP registry BEFORE dispose so MCP request threads
         // never resolve a tab to a disposed state.
         states.remove(key(windowId, terminalId))?.let { state ->
@@ -71,7 +71,7 @@ object TabbedTerminalStateRegistry {
     fun contains(windowId: String, terminalId: String): Boolean = states.containsKey(key(windowId, terminalId))
 
     fun removeAllForWindow(windowId: String): Int {
-        titleBarTerminals.remove(windowId)
+        titleBarTerminals.removeWindow(windowId)
         val prefix = "$windowId:"
         val keysToRemove = states.keys.filter { it.startsWith(prefix) }
         keysToRemove.forEach { key ->
@@ -282,6 +282,7 @@ object TabbedTerminalStateRegistry {
             }
         }
         states.clear()
+        titleBarTerminals.clear()
         sidebarConfigToTabId.clear()
         _resetGeneration.value++
         logger.info(LogCategory.TERMINAL, "Reset complete: disposed terminal states", mapOf("count" to count, "generation" to _resetGeneration.value))

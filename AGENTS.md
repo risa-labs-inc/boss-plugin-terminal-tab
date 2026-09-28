@@ -8,7 +8,7 @@ Terminal tab using BossTerm library for terminal emulation
 
 - **Plugin ID**: `ai.rever.boss.plugin.dynamic.terminaltab`
 - **Main Class**: `ai.rever.boss.plugin.dynamic.terminaltab.TerminalTabDynamicPlugin`
-- **API Version**: 1.0.89 (status-bar setup progress and reopen support)
+- **API Version**: 1.0.95 (window-owned terminal titlebar controls and call overlays)
 
 ## Essential Commands
 
@@ -175,3 +175,23 @@ Publisher stop waits for row deletion with a timeout, before closing the host br
 
 Relay tickets and settings handoffs use the host identity through owner-checked RPCs.
 Account preference reset must stay synchronous, in-memory and free of blocking I/O.
+
+## Hosted titlebar controls
+
+BossConsole 9.5.30 is the planned minimum supporting host release; verify this floor
+before publishing. macOS hosted windows own Sharing, Call and MCP, including the
+call overlay. Other hosts retain the terminal controls. Main and sidebar terminal
+focus select Share's target; closing that terminal clears selection without choosing
+another session. Moving focus to the titlebar or browser retains the last target.
+
+MCP auto-attachment discovers installed clients and writes the `boss` MCP registration
+into their normal user config (for example Claude's `~/.claude.json` and Codex's
+`~/.codex/config.toml`), using BossTerm's existing client adapters and protections for
+foreign registrations/live sibling instances. Disable automatic installed-client
+attachment in MCP settings (`mcpAutoAttachInstalled`); already explicitly attached
+clients retain the existing reattach behavior.
+
+For local dependency validation, use `-PuseLocalBossTerm=true` and
+`-PbossPluginApiPath=/absolute/path/to/boss-plugin-api`. Maven-local artifacts may
+shadow releases: validate the published BossTerm 1.2.173 artifact and source overrides
+before release. Do not publish a local development artifact to remote repositories.

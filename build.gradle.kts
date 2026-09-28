@@ -150,7 +150,7 @@ kotlin {
 // Auto-detect CI environment
 val useLocalDependencies = System.getenv("CI") != "true"
 val bossPluginApiPath = providers.gradleProperty("bossPluginApiPath").orNull ?: "../boss-plugin-api"
-// Setup progress registration and host-owned onboarding require 1.0.95.
+// Window-owned titlebar controls and call overlays require API 1.0.95.
 // Compile against the declared minimum so newer symbols cannot silently bypass
 // the compatibility gate. Keep both workflow pins aligned with this version.
 val bossPluginApiVersion = "1.0.95"
@@ -276,10 +276,10 @@ val pinnedLocalApiJar = provider {
 // synchronously to settings.json under bossterm.settings.dir:
 // applyCollapsedTabStripDefault reads it back right after updateSetting.
 // Includes host account isolation, relay tickets and account viewing preferences.
-// FontUtils/ImageRenderer match the published 1.2.171 sources except attribution comments.
-val bosstermVersion = "1.2.171"
+// FontUtils/ImageRenderer checked against the hosted-controls source; verify again against release 1.2.173.
+val bosstermVersion = "1.2.173"
 // This source override must be reviewed (or removed) whenever BossTerm changes.
-check(bosstermVersion == "1.2.171") {
+check(bosstermVersion == "1.2.173") {
     "Review the ImageRenderer and FontUtils overrides before upgrading BossTerm"
 }
 

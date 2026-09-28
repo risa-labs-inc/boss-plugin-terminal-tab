@@ -8,6 +8,7 @@ import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
 import ai.rever.bossterm.compose.mcp.BossTermMcpConfig
 import ai.rever.bossterm.compose.mcp.BossTermMcpManager
+import ai.rever.boss.plugin.ui.TerminalTitleBarBridge
 import ai.rever.bossterm.compose.mcp.McpTerminalRegistry
 import ai.rever.boss.plugin.dynamic.terminaltab.onboarding.BossTermSetupController
 import ai.rever.bossterm.compose.settings.SettingsManager
@@ -224,7 +225,8 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         startMcpServer()
 
         startSessionSharing(context)
-        ai.rever.boss.plugin.ui.TerminalTitleBarBridge.registerProvider(this) { windowId -> TerminalWindowControls(windowId) }
+        runCatching { TerminalTitleBarBridge.registerProvider(this) { windowId -> TerminalWindowControls(windowId) } }
+            .onFailure { mcpLogger.warn(LogCategory.TERMINAL, "Could not register optional titlebar controls", error = it) }
     }
 
     /**
@@ -485,7 +487,8 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
     }
 
     override fun dispose() {
-        ai.rever.boss.plugin.ui.TerminalTitleBarBridge.unregisterProvider(this)
+        runCatching { TerminalTitleBarBridge.unregisterProvider(this) }
+            .onFailure { mcpLogger.warn(LogCategory.TERMINAL, "Could not unregister optional titlebar controls", error = it) }
         stopAccountServices()
         // disconnect() detaches the transport but retains the signed-out host facade.
         // A still-composing old terminal never falls back to standalone credentials.

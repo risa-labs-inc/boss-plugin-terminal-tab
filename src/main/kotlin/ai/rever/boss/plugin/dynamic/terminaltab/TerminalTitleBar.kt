@@ -3,9 +3,13 @@ package ai.rever.boss.plugin.dynamic.terminaltab
 import ai.rever.boss.plugin.ui.TerminalTitleBarAction
 import ai.rever.boss.plugin.ui.TerminalTitleBarBridge
 import ai.rever.bossterm.compose.mcp.LocalBossTermMcpConfig
-import ai.rever.bossterm.compose.window.HostedTerminalControls
 import ai.rever.bossterm.compose.window.HostedCallBar
-import androidx.compose.runtime.*
+import ai.rever.bossterm.compose.window.HostedTerminalControls
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.remember
 
 private class TitleBarOwner { var live = true }
 
@@ -29,14 +33,22 @@ internal fun TerminalWindowControls(windowId: String) {
             callLabel = CALL_LABEL,
             voiceToolSource = BossVoiceTools.source,
             onActions = { actions ->
-                if (owner.live) TerminalTitleBarBridge.publish(windowId, owner, true,
-                    actions.map { TerminalTitleBarAction(it.id, it.label, it.symbol, it.icon, it.active, it.onClick) })
+                if (owner.live) {
+                    TerminalTitleBarBridge.publish(
+                        windowId = windowId,
+                        owner = owner,
+                        active = true,
+                        actions = actions.map {
+                            TerminalTitleBarAction(it.id, it.label, it.symbol, it.icon, it.active, it.onClick)
+                        },
+                    )
+                }
             },
         )
     }
 }
 
-/** The window owns the controls; suppress the terminal's duplicate floating strip. */
+/** The window owns status and toolbar controls, so neither terminal header slot is rendered. */
 @Composable
 internal fun terminalTitleBarHeader(
     windowId: String,
