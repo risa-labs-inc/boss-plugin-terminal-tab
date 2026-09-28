@@ -357,6 +357,7 @@ dependencies {
     // built from runtimeClasspath).
     testImplementation(compose.runtime)
     testImplementation(compose.foundation)
+    testImplementation(compose.material)
     // ui-graphics for androidx.compose.ui.graphics.Color: the theme-bridge test
     // constructs host colors, and a transitive dep of an `implementation` dep is
     // not on the test COMPILE classpath even though it is on the runtime one.

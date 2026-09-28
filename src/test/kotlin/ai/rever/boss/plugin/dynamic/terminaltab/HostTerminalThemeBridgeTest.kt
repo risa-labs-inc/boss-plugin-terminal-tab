@@ -24,6 +24,26 @@ import kotlin.test.assertTrue
  */
 class HostTerminalThemeBridgeTest {
     @Test
+    fun `active glass uses BossTerm liquid themes and disabling restores Blueprint`() {
+        for (glass in listOf(BuiltinThemes.LIQUID_GLASS_LIGHT, BuiltinThemes.LIQUID_GLASS_DARK)) {
+            fun resolve(enabled: Boolean) = buildTerminalTheme(
+                background = glass.backgroundColorValue,
+                foreground = Color.White,
+                accent = Color.Red,
+                data = Color.Green,
+                error = Color.Red,
+                success = Color.Green,
+                warning = Color.Yellow,
+                textSecondary = Color.Gray,
+                liquidGlass = enabled,
+            )
+            // Compare the whole theme, not only its ID: ANSI and chrome must follow BossTerm.
+            assertEquals(glass, resolve(true))
+            assertEquals(curatedBossThemeFor(glass.background), resolve(false))
+        }
+    }
+
+    @Test
     fun `every BOSS builtin floor round-trips through colorToHex`() {
         val boss = BuiltinThemes.ALL.filter { it.id.startsWith("boss-") }
         assertTrue(boss.isNotEmpty(), "the bundled BossTerm has no boss-* builtin at all")
