@@ -87,7 +87,12 @@ throw `ClassNotFoundException`, which silently broke the `cli` tool ("dispatcher
 - the window an MCP tool acts in is the last one a terminal composable saw focused (the host
   publishes no focus event to plugins), else the most recently registered;
 - a terminal link opens through its own window's `SplitViewOperations`: a web page in a browser
-  tab, a file at its line and column.
+  tab, a file at its line and column. Only `http` and `https` are opened as web links; any other
+  scheme matched in terminal output (`boss://`, `javascript:`) is left to BossTerm, because
+  terminal output can be written by anyone. A file link with no window to open in is swallowed,
+  never passed to BossTerm's fallback, which would hand it to the OS opener.
+- host calls run on `hostCallContext` (the UI thread). The host's implementations switch threads
+  themselves today, but the API does not promise it.
 
 Known losses, because the plugin API has no surface for them: the host's ask-or-remember
 terminal link dialog, and the top-bar runner listing `run_in_sidebar` runs. Both need a

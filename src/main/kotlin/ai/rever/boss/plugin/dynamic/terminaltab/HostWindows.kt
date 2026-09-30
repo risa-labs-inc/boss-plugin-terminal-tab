@@ -69,7 +69,9 @@ internal object HostWindows {
         synchronized(lock) {
             lastFocused?.takeIf { it in contexts }
                 ?: contexts.keys.lastOrNull { it != UNKNOWN_WINDOW }
-                ?: lastFocused
+                // Only a context that named no window can vouch for a composable's window id; a
+                // closed window is never returned.
+                ?: lastFocused?.takeIf { UNKNOWN_WINDOW in contexts }
         }
 
     /** [windowId]'s split-view operations, or the target window's when it has none of its own. */

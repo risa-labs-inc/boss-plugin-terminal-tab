@@ -74,6 +74,30 @@ class TerminalLinksTest {
     }
 
     @Test
+    fun `a plus in a path is a plus, not a space`() {
+        assertEquals(FileReference("src/c++/main.cpp", 10), parseFileReference("src/c++/main.cpp:10"))
+        assertEquals(FileReference("/opt/g++-13/x.h"), parseFileReference("/opt/g++-13/x.h"))
+        assertEquals(FileReference("/a/b c+d.kt", 2), parseFileReference("/a/b%20c+d.kt:2"))
+    }
+
+    @Test
+    fun `a Windows file URL keeps its drive letter`() {
+        assertEquals("C:/src/x.kt:3", stripFilePrefix("file:///C:/src/x.kt:3"))
+        assertEquals(FileReference("C:/src/x.kt", 3), parseFileReference(stripFilePrefix("file:///C:/src/x.kt:3")))
+    }
+
+    @Test
+    fun `only web pages are opened as web links`() {
+        assertEquals(TerminalLinkTarget.Web("https://example.com"), webLinkTarget("https://example.com"))
+        assertEquals(TerminalLinkTarget.Web("http://localhost:8080/x"), webLinkTarget("http://localhost:8080/x"))
+        // Anything else a terminal matched as a link is left to BossTerm's own handling.
+        assertNull(webLinkTarget("boss://terminal?command=rm%20-rf%20~"))
+        assertNull(webLinkTarget("javascript:alert(1)"))
+        assertNull(webLinkTarget("ftp://example.com/x"))
+        assertNull(webLinkTarget("not a url"))
+    }
+
+    @Test
     fun `every file URL form terminals print is stripped to a path`() {
         assertEquals("/a/b", stripFilePrefix("file:///a/b"))
         assertEquals("/a/b", stripFilePrefix("file:/a/b"))

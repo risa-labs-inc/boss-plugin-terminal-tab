@@ -7,6 +7,8 @@ import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import io.modelcontextprotocol.kotlin.sdk.types.ToolSchema
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
@@ -18,6 +20,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import java.net.URLEncoder
+import kotlin.coroutines.CoroutineContext
 import ai.rever.boss.plugin.dynamic.terminaltab.onboarding.BossTermSetupController
 import ai.rever.bossterm.compose.settings.SettingsManager
 
@@ -336,8 +339,17 @@ internal var sidebarTabStarter: (windowId: String, command: String, workingDir: 
  * still runs, the top-bar runner just does not list it. A seam so tests can see what it is given.
  */
 @Volatile
+// TODO(host-api): a runner surface on the plugin API, so sidebar runs show in the top-bar runner again.
 internal var sidebarRunnerRegistrar: (windowId: String, configId: String, command: String, workingDir: String?, name: String) -> Boolean =
     { _, _, _, _, _ -> false }
+
+/**
+ * Where host calls run. The host's implementations happen to switch to the UI thread themselves
+ * today, but that is not part of the API's contract, so the tools do not lean on it. Tests swap
+ * this for a dispatcher that needs no UI thread.
+ */
+@Volatile
+internal var hostCallContext: CoroutineContext = Dispatchers.Main
 
 /** Test seam over [HostWindows.targetWindowId]. */
 @Volatile
@@ -425,7 +437,7 @@ private suspend fun runInSidebar(args: JsonObject): CallToolResult {
     // drives the pending-command consumption that actually runs the command
     // (existing Runner flow); if the panel was already open, newSidebarTab
     // already created/re-ran the tab above.
-    val panelRequested = bossLinkDispatcher("boss://plugin?id=terminal")
+    val panelRequested = withContext(hostCallContext) { bossLinkDispatcher("boss://plugin?id=terminal") }
 
     // Register the run with the host runner so the top-bar runner reflects it
     // (selects the config + shows running/Stop). Best-effort; the command still
@@ -529,6 +541,9 @@ private fun cliSchema(): ToolSchema =
     )
 
 private suspend fun cli(args: JsonObject): CallToolResult {
+    if (args.str("split") != null && args.bool("open_url") != true) {
+        return errorResult("split applies to open_url only.")
+    }
     urlSplitMode(args)?.let { split -> return openUrlInSplit(args, split) }
     val uri = resolveCliUri(args)
         ?: return errorResult(
@@ -540,7 +555,7 @@ private suspend fun cli(args: JsonObject): CallToolResult {
         return errorResult("Resolved uri must start with boss:// (got: $uri)")
     }
     val dispatched = try {
-        bossLinkDispatcher(uri)
+        withContext(hostCallContext) { bossLinkDispatcher(uri) }
     } catch (t: Throwable) {
         hostToolsLogger.warn(LogCategory.SYSTEM, "cli: dispatching the boss:// link failed", error = t)
         false
@@ -568,7 +583,7 @@ private fun urlSplitMode(args: JsonObject): String? =
  * browser tab an agent opens. The call itself is behind the host's MCP approval (this tool is
  * declared mutating), which is the confirmation `boss://url` would otherwise ask for.
  */
-private fun openUrlInSplit(args: JsonObject, split: String): CallToolResult {
+private suspend fun openUrlInSplit(args: JsonObject, split: String): CallToolResult {
     val url = args.str("url")?.trim()
         ?: return errorResult("open_url with split needs a url.")
     val scheme = runCatching { java.net.URI(url).scheme?.lowercase() }.getOrNull()
@@ -585,7 +600,7 @@ private fun openUrlInSplit(args: JsonObject, split: String): CallToolResult {
     val operations = HostWindows.splitViewFor(windowId)
         ?: return errorResult("No BossConsole window is available; open a window and retry.")
     return try {
-        operations.openUrlInSplit(url, url, mode)
+        withContext(hostCallContext) { operations.openUrlInSplit(url, url, mode) }
         jsonResult(isError = false) {
             put("ok", true)
             put("url", url)

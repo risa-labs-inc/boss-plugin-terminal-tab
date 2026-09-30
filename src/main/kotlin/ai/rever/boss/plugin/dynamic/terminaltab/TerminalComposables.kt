@@ -1,6 +1,7 @@
 package ai.rever.boss.plugin.dynamic.terminaltab
 
 import ai.rever.boss.plugin.api.SIDEBAR_TERMINAL_ID
+import ai.rever.boss.plugin.api.SplitViewOperations
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
 import ai.rever.bossterm.compose.EmbeddableTerminal
@@ -20,7 +21,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -28,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalWindowInfo
 import ai.rever.boss.plugin.ui.TerminalTitleBarBridge
 import ai.rever.bossterm.compose.window.LocalCallBarHosted
 import kotlinx.coroutines.CoroutineScope
@@ -389,24 +390,29 @@ internal fun KeyboardShortcutInterceptorWrapper(
  * [TerminalLinkTarget] for why this goes through the plugin API rather than the host's bus.
  */
 internal fun handleTerminalLinkClick(info: HyperlinkInfo, scope: CoroutineScope, terminalId: String? = null, windowId: String? = null): Boolean {
-    val operations = HostWindows.splitViewFor(windowId)
-    if (operations == null) {
-        logger.warn(LogCategory.TERMINAL, "No window to open the terminal link in", mapOf("terminalId" to (terminalId ?: "")))
-        return false
-    }
     return when (info.type) {
         HyperlinkType.HTTP -> {
-            scope.launch(Dispatchers.Main) { openLink(operations, TerminalLinkTarget.Web(info.url)) }
+            val target = webLinkTarget(info.url) ?: return false
+            // No window to open it in: BossTerm's own handling opens a web page in the system browser.
+            val operations = HostWindows.splitViewFor(windowId) ?: return false
+            scope.launch(hostCallContext) { openLink(operations, target) }
             true
         }
         HyperlinkType.FILE -> {
+            // Handled even with no window: BossTerm's fallback would hand a file to the OS opener,
+            // which can run it. A file link that cannot open in BOSS does nothing.
+            val operations = HostWindows.splitViewFor(windowId)
+            if (operations == null) {
+                logger.warn(LogCategory.TERMINAL, "No window to open the terminal link in", mapOf("terminalId" to (terminalId ?: "")))
+                return true
+            }
             scope.launch(Dispatchers.IO) {
                 val target = resolveFileLink(info.url)
                 if (target == null) {
                     logger.warn(LogCategory.TERMINAL, "Cannot open file from terminal link", mapOf("url" to info.url))
                     return@launch
                 }
-                withContext(Dispatchers.Main) { openLink(operations, target) }
+                withContext(hostCallContext) { openLink(operations, target) }
             }
             true
         }
@@ -414,7 +420,7 @@ internal fun handleTerminalLinkClick(info: HyperlinkInfo, scope: CoroutineScope,
     }
 }
 
-private fun openLink(operations: ai.rever.boss.plugin.api.SplitViewOperations, target: TerminalLinkTarget) {
+private fun openLink(operations: SplitViewOperations, target: TerminalLinkTarget) {
     try {
         openTerminalLink(operations, target)
     } catch (e: Exception) {
