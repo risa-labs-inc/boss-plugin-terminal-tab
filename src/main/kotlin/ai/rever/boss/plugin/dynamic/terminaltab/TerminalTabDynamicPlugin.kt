@@ -134,6 +134,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
         sweepSidebarEnvFiles("start")
 
         pluginContext = context
+        HostWindows.register(context)
         // Install before any BossTerm UI/default singleton can restore a standalone login.
         try {
             val bridge = HostAccountSessionBridge(
@@ -487,6 +488,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
     }
 
     override fun dispose() {
+        pluginContext?.let(HostWindows::unregister)
         runCatching { TerminalTitleBarBridge.unregisterProvider(this) }
             .onFailure { mcpLogger.warn(LogCategory.TERMINAL, "Could not unregister hosted titlebar controls", error = it) }
         stopAccountServices()

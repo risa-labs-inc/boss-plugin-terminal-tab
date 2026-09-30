@@ -71,6 +71,29 @@ uses in each host shape.
 The voice path is unchanged: BossTerm's voice executor calls `HostMcpTool.handler` directly under
 its own policy and never reaches the registry.
 
+### Reach the host through the plugin API, never by reflection
+
+Since BOSS 9.5.25 (BossConsole `dc443ee9c`) the plugin classloader refuses every host class
+outside its shared packages, on purpose: a plugin must not resolve host credentials or process
+control by class name. `Class.forName("ai.rever.boss.utils.DeepLinkHandler")` and the like now
+throw `ClassNotFoundException`, which silently broke the `cli` tool ("dispatcher unavailable"),
+`run_in_sidebar` ("No focused BossConsole window") and clicking a link in a terminal.
+
+`HostWindows` is the way in now:
+
+- a `boss://` link goes to `SplitViewOperations.openUrlInActivePanel`, which the host hands to
+  `DeepLinkHandler.processDeepLink` (`routePluginDeepLink`), so every `cli` verb keeps its old
+  origin and the host's confirmation where it has one;
+- the window an MCP tool acts in is the last one a terminal composable saw focused (the host
+  publishes no focus event to plugins), else the most recently registered;
+- a terminal link opens through its own window's `SplitViewOperations`: a web page in a browser
+  tab, a file at its line and column.
+
+Known losses, because the plugin API has no surface for them: the host's ask-or-remember
+terminal link dialog, and the top-bar runner listing `run_in_sidebar` runs. Both need a
+host-implemented API. `ShellUtils`, `RunnerSettingsManager` and `BossDirectories` are still looked
+up by reflection and always fall back; their fallbacks are what runs today.
+
 ### `run_in_sidebar` takes an `env` object
 
 Environment variables for the command, as NAME to value. Neither the values nor the command go on
