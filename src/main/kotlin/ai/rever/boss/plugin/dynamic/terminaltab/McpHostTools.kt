@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin.dynamic.terminaltab
 
+import ai.rever.boss.plugin.api.TabSplitMode
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
 import io.modelcontextprotocol.kotlin.sdk.server.Server
@@ -81,10 +82,9 @@ internal class HostMcpTool(
  * does: open the sidebar terminal and run a command (the "Runner") and dispatch
  * the `boss` CLI's deep-link verbs.
  *
- * Both reach host-internal classes (`DeepLinkHandler`, `WindowFocusManager`) by
- * reflection — the same pattern [TabbedTerminalStateRegistry]'s `ShellUtils` /
- * `TerminalLinkEventBus` hops use — so the plugin needs no host or boss-plugin-api
- * change. Every host hop is guarded: a missing/renamed host class degrades the
+ * Both reach the host through the plugin API ([HostWindows]); they used to reflect into
+ * `DeepLinkHandler` and `WindowFocusManager`, which the plugin classloader refuses since
+ * BOSS 9.5.25. Every host hop is guarded: a host that cannot take the request degrades the
  * tool to an error result and never breaks terminals, the MCP server or a call.
  */
 internal val bossHostMcpToolDefs: List<HostMcpTool> = listOf(
@@ -329,16 +329,23 @@ internal var sidebarTabStarter: (windowId: String, command: String, workingDir: 
         )
     }
 
-/** Test seam over [registerSidebarRunWithRunner], which reaches the host runner by reflection. */
+/**
+ * Tells the top-bar runner about a sidebar run, so it selects the config and shows Stop. The
+ * plugin API has no runner surface, and the host's `RunnerTerminalService` is behind the plugin
+ * classloader boundary since BOSS 9.5.25 (see [HostWindows]), so this reports false: the command
+ * still runs, the top-bar runner just does not list it. A seam so tests can see what it is given.
+ */
 @Volatile
 internal var sidebarRunnerRegistrar: (windowId: String, configId: String, command: String, workingDir: String?, name: String) -> Boolean =
-    { windowId, configId, command, workingDir, name ->
-        registerSidebarRunWithRunner(windowId = windowId, configId = configId, command = command, workingDir = workingDir, name = name)
-    }
+    { _, _, _, _, _ -> false }
 
-/** Test seam over the host's focused-window lookup. */
+/** Test seam over [HostWindows.targetWindowId]. */
 @Volatile
-internal var sidebarWindowLookup: () -> String? = ::focusedWindowId
+internal var sidebarWindowLookup: () -> String? = HostWindows::targetWindowId
+
+/** Test seam over [HostWindows.dispatchBossLink]. */
+@Volatile
+internal var bossLinkDispatcher: (uri: String) -> Boolean = HostWindows::dispatchBossLink
 
 private suspend fun runInSidebar(args: JsonObject): CallToolResult {
     val command = args.str("command")
@@ -418,11 +425,11 @@ private suspend fun runInSidebar(args: JsonObject): CallToolResult {
     // drives the pending-command consumption that actually runs the command
     // (existing Runner flow); if the panel was already open, newSidebarTab
     // already created/re-ran the tab above.
-    val panelRequested = processDeepLink("boss://plugin?id=terminal")
+    val panelRequested = bossLinkDispatcher("boss://plugin?id=terminal")
 
     // Register the run with the host runner so the top-bar runner reflects it
     // (selects the config + shows running/Stop). Best-effort; the command still
-    // runs even if the host class isn't reachable.
+    // runs without it, and today it always reports false (see sidebarRunnerRegistrar).
     // The runner entry gets the loader, not the bare command. Its file is gone after the first run,
     // so a re-run from the top-bar runner prints why and runs nothing, instead of silently running
     // the command without its variables. Values are never in it.
@@ -457,7 +464,8 @@ private const val CLI_DESCRIPTION =
         "ONE action: open_panel (+panel_id) to open any sidebar plugin/panel; open_terminal " +
         "(+command) to open the MAIN terminal (for the sidebar Runner use run_in_sidebar); " +
         "open_folder (+path) to open a folder in the codebase; open_url (+url) to open a " +
-        "URL in the browser; split_window (+orientation: vertical|horizontal, default " +
+        "URL in the browser, or in a split of the focused window with split: " +
+        "vertical|horizontal|existing; split_window (+orientation: vertical|horizontal, default " +
         "vertical) to split BossConsole's main window; or a raw `uri` starting with boss://. " +
         "Known panel ids: terminal, console, codebase, bookmarks, downloads, " +
         "run-configurations, git-status, git-log, performance, topofmind, plugin-manager, " +
@@ -498,6 +506,12 @@ private fun cliSchema(): ToolSchema =
                 put("type", "string")
                 put("description", "URL to open for open_url.")
             }
+            putJsonObject("split") {
+                put("type", "string")
+                put("description", "Optional, with open_url: open the page in a split of the focused window " +
+                        "instead of a new tab - \"vertical\" (a new pane to the right), \"horizontal\" (below) " +
+                        "or \"existing\" (another pane already open). http and https only.")
+            }
             putJsonObject("split_window") {
                 put("type", "boolean")
                 put("description", "Split BossConsole's main window (use with optional orientation).")
@@ -515,6 +529,7 @@ private fun cliSchema(): ToolSchema =
     )
 
 private suspend fun cli(args: JsonObject): CallToolResult {
+    urlSplitMode(args)?.let { split -> return openUrlInSplit(args, split) }
     val uri = resolveCliUri(args)
         ?: return errorResult(
             "Provide one action: open_panel+panel_id, open_terminal(+command), " +
@@ -524,13 +539,62 @@ private suspend fun cli(args: JsonObject): CallToolResult {
     if (!uri.startsWith("boss://")) {
         return errorResult("Resolved uri must start with boss:// (got: $uri)")
     }
-    val dispatched = processDeepLink(uri)
+    val dispatched = try {
+        bossLinkDispatcher(uri)
+    } catch (t: Throwable) {
+        hostToolsLogger.warn(LogCategory.SYSTEM, "cli: dispatching the boss:// link failed", error = t)
+        false
+    }
     if (!dispatched) {
-        return errorResult("Host deep-link dispatcher unavailable (DeepLinkHandler not reachable).")
+        return errorResult("No BossConsole window is available to take the link; open a window and retry.")
     }
     return jsonResult(isError = false) {
         put("ok", true)
         put("uri", uri)
+    }
+}
+
+/**
+ * `open_url` with a `split`: the split to open the URL in, or null when this is not such a call.
+ * An unknown `split` value is an error rather than a silent new tab, so it maps to a mode that
+ * [openUrlInSplit] refuses.
+ */
+private fun urlSplitMode(args: JsonObject): String? =
+    args.str("split")?.trim()?.lowercase()?.ifBlank { null }?.takeIf { args.bool("open_url") == true }
+
+/**
+ * Open a web page in a split of the focused window through `SplitViewOperations.openUrlInSplit`.
+ * Web pages only: `boss://` links go through [cli]'s dispatcher, and nothing else belongs in a
+ * browser tab an agent opens. The call itself is behind the host's MCP approval (this tool is
+ * declared mutating), which is the confirmation `boss://url` would otherwise ask for.
+ */
+private fun openUrlInSplit(args: JsonObject, split: String): CallToolResult {
+    val url = args.str("url")?.trim()
+        ?: return errorResult("open_url with split needs a url.")
+    val scheme = runCatching { java.net.URI(url).scheme?.lowercase() }.getOrNull()
+    if (scheme != "http" && scheme != "https") {
+        return errorResult("open_url with split opens http and https pages only (got: ${scheme ?: "no scheme"}).")
+    }
+    val mode = when (split) {
+        "vertical", "right" -> TabSplitMode.VERTICAL_SPLIT
+        "horizontal", "bottom", "below" -> TabSplitMode.HORIZONTAL_SPLIT
+        "existing" -> TabSplitMode.EXISTING_SPLIT
+        else -> return errorResult("split must be vertical, horizontal or existing (got: $split).")
+    }
+    val windowId = sidebarWindowLookup()
+    val operations = HostWindows.splitViewFor(windowId)
+        ?: return errorResult("No BossConsole window is available; open a window and retry.")
+    return try {
+        operations.openUrlInSplit(url, url, mode)
+        jsonResult(isError = false) {
+            put("ok", true)
+            put("url", url)
+            put("split", mode.name)
+            windowId?.let { put("windowId", it) }
+        }
+    } catch (t: Throwable) {
+        hostToolsLogger.warn(LogCategory.BROWSER, "cli: openUrlInSplit failed", error = t)
+        errorResult("Could not open the page in a split (${t::class.simpleName}).")
     }
 }
 
@@ -550,99 +614,6 @@ private fun resolveCliUri(args: JsonObject?): String? {
         args.str("panel_id") != null -> "boss://plugin?id=${enc(args.str("panel_id")!!)}"
         else -> null
     }
-}
-
-// ---------------------------------------------------------------------------
-// Host reflection helpers (guarded — never throw out of a tool handler)
-// ---------------------------------------------------------------------------
-
-/**
- * Best window id to target, from the host's `WindowFocusManager`. Tries, in order:
- *
- *  1. The private `focusedWindowId` field — set at window registration AND on every
- *     focus gain, so it is non-null in a running app even while BOSS is backgrounded.
- *     This is the field we rely on: an agent drives the app from *another* window
- *     (this terminal), so BOSS is rarely the OS-focused window when a tool fires.
- *  2. The public `focusedWindowFlow.value` (read via the StateFlow interface getter).
- *     Less reliable: that flow is initialized to null and only set on a real
- *     `windowGainedFocus` AWT event — never on registration — so it can be null even
- *     when a window is plainly available.
- *  3. Any registered window (the only one, for the common single-window case).
- *
- * Returns null only if `WindowFocusManager` isn't reachable or has no windows.
- */
-private fun focusedWindowId(): String? {
-    val clazz = try {
-        Class.forName("ai.rever.boss.utils.WindowFocusManager")
-    } catch (t: Throwable) {
-        hostToolsLogger.warn(LogCategory.SYSTEM, "WindowFocusManager not reachable", error = t)
-        return null
-    }
-    val instance = clazz.getField("INSTANCE").get(null)
-
-    // 1) private var focusedWindowId: String?
-    runCatching {
-        clazz.getDeclaredField("focusedWindowId").apply { isAccessible = true }.get(instance) as? String
-    }.getOrNull()?.let { return it }
-
-    // 2) focusedWindowFlow.value — invoke getValue() on the StateFlow interface so
-    //    we don't depend on the concrete (internal) StateFlow impl class.
-    runCatching {
-        val flow = clazz.getMethod("getFocusedWindowFlow").invoke(instance)
-        val stateFlow = Class.forName("kotlinx.coroutines.flow.StateFlow")
-        flow?.let { stateFlow.getMethod("getValue").invoke(it) as? String }
-    }.getOrNull()?.let { return it }
-
-    // 3) windows map keys — any registered window.
-    runCatching {
-        val windows = clazz.getDeclaredField("windows").apply { isAccessible = true }.get(instance) as? Map<*, *>
-        windows?.keys?.firstOrNull() as? String
-    }.getOrNull()?.let { return it }
-
-    hostToolsLogger.warn(LogCategory.SYSTEM, "focusedWindowId: no window id available from WindowFocusManager")
-    return null
-}
-
-/**
- * Dispatch a `boss://` deep link through the host's `DeepLinkHandler.processDeepLink`.
- * Non-suspend at the call boundary (the handler launches panel opens on the main
- * dispatcher internally). Returns false if the host class isn't reachable.
- */
-private fun processDeepLink(uri: String): Boolean = try {
-    val clazz = Class.forName("ai.rever.boss.utils.DeepLinkHandler")
-    val instance = clazz.getField("INSTANCE").get(null)
-    clazz.getMethod("processDeepLink", String::class.java).invoke(instance, uri)
-    true
-} catch (t: Throwable) {
-    hostToolsLogger.warn(LogCategory.SYSTEM, "processDeepLink reflection failed", error = t)
-    false
-}
-
-/**
- * Tell the host runner about a sidebar run so the top-bar runner reflects it:
- * selects the config in the window's dropdown and marks it running (Stop enabled).
- * Reflects into `RunnerTerminalService.registerSidebarRun` (non-suspend, primitive
- * args). The sidebar terminal is already opened by [TabbedTerminalStateRegistry];
- * this only updates runner state, which the host clears on tab close. Returns false
- * if the host class isn't reachable.
- */
-private fun registerSidebarRunWithRunner(
-    windowId: String,
-    configId: String,
-    command: String,
-    workingDir: String?,
-    name: String
-): Boolean = try {
-    val clazz = Class.forName("ai.rever.boss.run.RunnerTerminalService")
-    val instance = clazz.getField("INSTANCE").get(null)
-    clazz.getMethod(
-        "registerSidebarRun",
-        String::class.java, String::class.java, String::class.java, String::class.java, String::class.java
-    ).invoke(instance, windowId, configId, command, workingDir, name)
-    true
-} catch (t: Throwable) {
-    hostToolsLogger.warn(LogCategory.TERMINAL, "registerSidebarRun reflection failed", error = t)
-    false
 }
 
 // ---------------------------------------------------------------------------

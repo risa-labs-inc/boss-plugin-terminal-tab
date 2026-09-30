@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -32,6 +33,7 @@ import ai.rever.bossterm.compose.window.LocalCallBarHosted
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val logger = BossLogger.forComponent("TerminalComposables")
 
@@ -371,41 +373,40 @@ internal fun KeyboardShortcutInterceptorWrapper(
     // The KeyboardShortcutInterceptor from the host is a composable that can't be called
     // via reflection easily. Since the host's shortcut system works at the window level,
     // terminal composables will still receive proper keyboard handling.
+    //
+    // This is also where the plugin learns which window is focused: the host publishes no focus
+    // event to plugins, and the MCP tools need a window to act in (see HostWindows).
+    val windowFocused = LocalWindowInfo.current.isWindowFocused
+    LaunchedEffect(windowId, windowFocused) {
+        if (windowFocused) HostWindows.noteFocused(windowId)
+    }
     content()
 }
 
 /**
- * Handles terminal link clicks by routing to the host's TerminalLinkEventBus.
+ * Open a link clicked in a terminal: a web page in a browser tab, a file (with its line and
+ * column, when the link carries them) in the editor, both in [windowId]'s active pane. See
+ * [TerminalLinkTarget] for why this goes through the plugin API rather than the host's bus.
  */
 internal fun handleTerminalLinkClick(info: HyperlinkInfo, scope: CoroutineScope, terminalId: String? = null, windowId: String? = null): Boolean {
+    val operations = HostWindows.splitViewFor(windowId)
+    if (operations == null) {
+        logger.warn(LogCategory.TERMINAL, "No window to open the terminal link in", mapOf("terminalId" to (terminalId ?: "")))
+        return false
+    }
     return when (info.type) {
         HyperlinkType.HTTP -> {
-            scope.launch {
-                emitTerminalLinkClick(info.url, terminalId, windowId)
-            }
+            scope.launch(Dispatchers.Main) { openLink(operations, TerminalLinkTarget.Web(info.url)) }
             true
         }
         HyperlinkType.FILE -> {
             scope.launch(Dispatchers.IO) {
-                val rawPath = stripFilePrefix(info.url)
-                val parsed = parseFileReference(rawPath)
-                val canonicalPath = validateAndGetCanonicalPath(parsed.path)
-
-                if (canonicalPath != null) {
-                    val urlWithLocation = buildString {
-                        append("file:")
-                        append(canonicalPath)
-                        if (parsed.line > 0) {
-                            append(":${parsed.line}")
-                            if (parsed.column > 0) {
-                                append(":${parsed.column}")
-                            }
-                        }
-                    }
-                    emitTerminalLinkClick(urlWithLocation, terminalId, windowId)
-                } else {
+                val target = resolveFileLink(info.url)
+                if (target == null) {
                     logger.warn(LogCategory.TERMINAL, "Cannot open file from terminal link", mapOf("url" to info.url))
+                    return@launch
                 }
+                withContext(Dispatchers.Main) { openLink(operations, target) }
             }
             true
         }
@@ -413,57 +414,10 @@ internal fun handleTerminalLinkClick(info: HyperlinkInfo, scope: CoroutineScope,
     }
 }
 
-// ============================================================
-// LINK HANDLING UTILITIES (delegating to host via reflection)
-// ============================================================
-
-private data class FileReference(val path: String, val line: Int, val column: Int)
-
-private fun stripFilePrefix(url: String): String {
-    return try {
-        val clazz = Class.forName("ai.rever.boss.components.events.TerminalLinkEventBusKt")
-        val method = clazz.getMethod("stripFilePrefix", String::class.java)
-        method.invoke(null, url) as String
-    } catch (e: Exception) {
-        url.removePrefix("file://").removePrefix("file:")
-    }
-}
-
-private fun parseFileReference(rawPath: String): FileReference {
-    return try {
-        val clazz = Class.forName("ai.rever.boss.components.events.TerminalLinkEventBusKt")
-        val method = clazz.getMethod("parseFileReference", String::class.java)
-        val result = method.invoke(null, rawPath)
-        val resultClass = result!!::class.java
-        FileReference(
-            path = resultClass.getMethod("getPath").invoke(result) as String,
-            line = resultClass.getMethod("getLine").invoke(result) as Int,
-            column = resultClass.getMethod("getColumn").invoke(result) as Int
-        )
-    } catch (e: Exception) {
-        // Simple fallback: just use the path as-is
-        FileReference(rawPath, 0, 0)
-    }
-}
-
-private fun validateAndGetCanonicalPath(path: String): String? {
-    return try {
-        val file = java.io.File(path)
-        if (file.exists()) file.canonicalPath else null
-    } catch (e: Exception) {
-        null
-    }
-}
-
-private fun emitTerminalLinkClick(url: String, terminalId: String?, windowId: String?) {
+private fun openLink(operations: ai.rever.boss.plugin.api.SplitViewOperations, target: TerminalLinkTarget) {
     try {
-        val busClass = Class.forName("ai.rever.boss.components.events.TerminalLinkEventBus")
-        val instance = busClass.kotlin.objectInstance ?: busClass.getDeclaredField("INSTANCE").get(null)
-        // Use tryEmitLinkClick (non-suspend) instead of emitLinkClick (suspend)
-        // Suspend functions can't be called via Java reflection due to hidden Continuation parameter
-        val method = busClass.getMethod("tryEmitLinkClick", String::class.java, String::class.java, String::class.java)
-        method.invoke(instance, url, terminalId, windowId)
+        openTerminalLink(operations, target)
     } catch (e: Exception) {
-        logger.warn(LogCategory.TERMINAL, "Failed to emit terminal link click", mapOf("url" to url))
+        logger.warn(LogCategory.TERMINAL, "Failed to open terminal link", error = e)
     }
 }
