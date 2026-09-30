@@ -30,10 +30,12 @@ class HostWindowsTest {
 
     private val productionWindowLookup = sidebarWindowLookup
     private val productionDispatcher = bossLinkDispatcher
+    private val productionHostContext = hostCallContext
 
     @BeforeTest
     fun reset() {
         HostWindows.resetForTest()
+        hostCallContext = kotlinx.coroutines.Dispatchers.Unconfined
     }
 
     @AfterTest
@@ -41,6 +43,7 @@ class HostWindowsTest {
         HostWindows.resetForTest()
         sidebarWindowLookup = productionWindowLookup
         bossLinkDispatcher = productionDispatcher
+        hostCallContext = productionHostContext
     }
 
     private fun operations(window: String): SplitViewOperations =
@@ -188,6 +191,25 @@ class HostWindowsTest {
             assertEquals(true, cli(args).isError, "should refuse $args")
         }
         assertTrue(calls.isEmpty(), "nothing may be opened: $calls")
+    }
+
+    @Test
+    fun `a window that closed is never the target`() {
+        val only = context("w1")
+        HostWindows.register(only)
+        HostWindows.noteFocused("w1")
+        HostWindows.unregister(only)
+        assertNull(HostWindows.targetWindowId())
+    }
+
+    @Test
+    fun `split without open_url is an error, not silently ignored`() {
+        val dispatched = mutableListOf<String>()
+        bossLinkDispatcher = { dispatched += it; true }
+        val result = cli(buildJsonObject { put("open_panel", true); put("panel_id", "codebase"); put("split", "vertical") })
+        assertEquals(true, result.isError)
+        assertTrue(result.text().contains("split"), result.text())
+        assertTrue(dispatched.isEmpty())
     }
 
     @Test

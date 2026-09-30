@@ -19,6 +19,17 @@ internal sealed interface TerminalLinkTarget {
     }
 }
 
+/**
+ * [url] as a web page to open in a browser tab, or null when it is not an http or https page.
+ * Terminal output can be written by anyone (a `cat`, a commit message, a server's reply), so a
+ * `boss://` or `javascript:` link matched in it is left to BossTerm's own handling rather than
+ * handed to BOSS's deep-link dispatcher by this plugin.
+ */
+internal fun webLinkTarget(url: String): TerminalLinkTarget.Web? {
+    val scheme = runCatching { java.net.URI(url.trim()).scheme?.lowercase() }.getOrNull()
+    return if (scheme == "http" || scheme == "https") TerminalLinkTarget.Web(url) else null
+}
+
 /** Open [target] in the window that [operations] belong to. Call on the UI thread. */
 internal fun openTerminalLink(operations: SplitViewOperations, target: TerminalLinkTarget) {
     when (target) {
@@ -53,24 +64,35 @@ private fun canonicalExistingPath(path: String): String? =
         null
     }
 
-/** A `file:` URL's path, in each of the forms terminals print (`file:///p`, `file://p`, `file:/p`, `file:p`). */
-internal fun stripFilePrefix(path: String): String =
-    when {
-        path.startsWith("file:///") -> path.removePrefix("file://")
-        path.startsWith("file://") -> path.removePrefix("file://")
-        path.startsWith("file:") -> path.removePrefix("file:")
-        else -> path
-    }
+/**
+ * A `file:` URL's path, in each of the forms terminals print (`file:///p`, `file://p`, `file:/p`,
+ * `file:p`). A Windows `file:///C:/x` keeps its drive letter first, `C:/x`, so the drive's colon
+ * is recognised as such rather than read against the path.
+ */
+internal fun stripFilePrefix(path: String): String {
+    val stripped =
+        when {
+            path.startsWith("file:///") -> path.removePrefix("file://")
+            path.startsWith("file://") -> path.removePrefix("file://")
+            path.startsWith("file:") -> path.removePrefix("file:")
+            else -> path
+        }
+    return if (WINDOWS_DRIVE_AFTER_SLASH.containsMatchIn(stripped)) stripped.substring(1) else stripped
+}
+
+private val WINDOWS_DRIVE_AFTER_SLASH = Regex("^/[A-Za-z]:[/\\\\]")
 
 internal data class FileReference(val path: String, val line: Int = 0, val column: Int = 0)
 
 /**
- * Split `path[:line[:column]]`, URL-decoding the path first. A Windows drive letter's colon
- * (`C:\...`) is never read as a line separator. Same rules as the host's `parseFileReference`
- * in plugin-events, which this plugin cannot load.
+ * Split `path[:line[:column]]`, percent-decoding the path first. A Windows drive letter's colon
+ * (`C:\...`) is never read as a line separator. The rules of the host's `parseFileReference` in
+ * plugin-events, which this plugin cannot load, except that a `+` stays a `+`: `URLDecoder` is a
+ * form decoder, and would turn `src/c++/main.cpp` into a path that does not exist.
  */
 internal fun parseFileReference(fileUrl: String): FileReference {
-    val decoded = runCatching { java.net.URLDecoder.decode(fileUrl, "UTF-8") }.getOrDefault(fileUrl)
+    val decoded =
+        runCatching { java.net.URLDecoder.decode(fileUrl.replace("+", "%2B"), "UTF-8") }.getOrDefault(fileUrl)
     val start = if (decoded.length >= 2 && decoded[0].isLetter() && decoded[1] == ':') 2 else 0
     val last = decoded.lastIndexOf(':')
     val secondLast = if (last > 0) decoded.lastIndexOf(':', last - 1) else -1
