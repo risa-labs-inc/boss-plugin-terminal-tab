@@ -385,9 +385,8 @@ internal fun KeyboardShortcutInterceptorWrapper(
 }
 
 /**
- * Open a link clicked in a terminal: a web page in a browser tab, a file (with its line and
- * column, when the link carries them) in the editor, both in [windowId]'s active pane. See
- * [TerminalLinkTarget] for why this goes through the plugin API rather than the host's bus.
+ * Request a terminal link open through the host's destination chooser and remembered preference.
+ * See [TerminalLinkTarget] for why this goes through the plugin API rather than the host's bus.
  */
 internal fun handleTerminalLinkClick(info: HyperlinkInfo, scope: CoroutineScope, terminalId: String? = null, windowId: String? = null): Boolean {
     return when (info.type) {
@@ -395,7 +394,7 @@ internal fun handleTerminalLinkClick(info: HyperlinkInfo, scope: CoroutineScope,
             val target = webLinkTarget(info.url) ?: return false
             // No window to open it in: BossTerm's own handling opens a web page in the system browser.
             val operations = HostWindows.splitViewFor(windowId) ?: return false
-            scope.launch(hostCallContext) { openLink(operations, target) }
+            scope.launch(hostCallContext) { openLink(operations, target, terminalId) }
             true
         }
         HyperlinkType.FILE -> {
@@ -412,7 +411,7 @@ internal fun handleTerminalLinkClick(info: HyperlinkInfo, scope: CoroutineScope,
                     logger.warn(LogCategory.TERMINAL, "Cannot open file from terminal link", mapOf("url" to info.url))
                     return@launch
                 }
-                withContext(hostCallContext) { openLink(operations, target) }
+                withContext(hostCallContext) { openLink(operations, target, terminalId) }
             }
             true
         }
@@ -420,9 +419,11 @@ internal fun handleTerminalLinkClick(info: HyperlinkInfo, scope: CoroutineScope,
     }
 }
 
-private fun openLink(operations: SplitViewOperations, target: TerminalLinkTarget) {
+private fun openLink(operations: SplitViewOperations, target: TerminalLinkTarget, terminalId: String?) {
     try {
-        openTerminalLink(operations, target)
+        openTerminalLink(operations, target, terminalId)
+    } catch (e: LinkageError) {
+        logger.warn(LogCategory.TERMINAL, "Host does not support the terminal-link chooser API", error = e)
     } catch (e: Exception) {
         logger.warn(LogCategory.TERMINAL, "Failed to open terminal link", error = e)
     }

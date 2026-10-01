@@ -9,7 +9,7 @@ jobs:
   release:
     uses: risa-labs-inc/BossConsole-Releases/.github/workflows/plugin-release.yml@main
     with:
-      boss_plugin_api_version: '1.0.95'
+      boss_plugin_api_version: '1.0.97'
       test_apt_packages: 'fish zsh'
       test_xvfb: true
     secrets:

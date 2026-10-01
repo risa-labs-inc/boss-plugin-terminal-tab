@@ -8,7 +8,7 @@ Terminal tab using BossTerm library for terminal emulation
 
 - **Plugin ID**: `ai.rever.boss.plugin.dynamic.terminaltab`
 - **Main Class**: `ai.rever.boss.plugin.dynamic.terminaltab.TerminalTabDynamicPlugin`
-- **API Version**: 1.0.95 (window-owned terminal titlebar controls and call overlays)
+- **API Version**: 1.0.97 (terminal-link destination requests; verify the released API version)
 
 ## Essential Commands
 
@@ -86,17 +86,18 @@ throw `ClassNotFoundException`, which silently broke the `cli` tool ("dispatcher
   origin and the host's confirmation where it has one;
 - the window an MCP tool acts in is the last one a terminal composable saw focused (the host
   publishes no focus event to plugins), else the most recently registered;
-- a terminal link opens through its own window's `SplitViewOperations`: a web page in a browser
-  tab, a file at its line and column. Only `http` and `https` are opened as web links; any other
+- a terminal link requests its own window's chooser through `SplitViewOperations.openTerminalLink`,
+  honoring Always Ask and remembered destinations. File requests retain line and column; providers
+  without chooser support keep ordinary URL/file opening. Only `http` and `https` are opened as web
+  links; any other
   scheme matched in terminal output (`boss://`, `javascript:`) is left to BossTerm, because
   terminal output can be written by anyone. A file link with no window to open in is swallowed,
   never passed to BossTerm's fallback, which would hand it to the OS opener.
 - host calls run on `hostCallContext` (the UI thread). The host's implementations switch threads
   themselves today, but the API does not promise it.
 
-Known losses, because the plugin API has no surface for them: the host's ask-or-remember
-terminal link dialog, and the top-bar runner listing `run_in_sidebar` runs. Both need a
-host-implemented API. `ShellUtils`, `RunnerSettingsManager` and `BossDirectories` are still looked
+Known loss, because the plugin API has no surface for it: the top-bar runner listing
+`run_in_sidebar` runs. It needs a host-implemented API. `ShellUtils`, `RunnerSettingsManager` and `BossDirectories` are still looked
 up by reflection and always fall back; their fallbacks are what runs today.
 
 ### `run_in_sidebar` takes an `env` object
@@ -206,7 +207,8 @@ Account preference reset must stay synchronous, in-memory and free of blocking I
 
 ## Hosted titlebar controls
 
-BossConsole 9.5.30 is the planned minimum supporting host release; verify this floor
+Titlebar controls require BossConsole 9.5.30. Terminal-link destination requests raise the plugin
+floor to the host release containing BossConsole#1798 (expected 9.5.34); verify the actual release
 before publishing. macOS hosted windows own Sharing, Call and MCP, including the
 call overlay. Other hosts retain the terminal controls. Main and sidebar terminal
 focus select Share's target; closing that terminal clears selection without choosing
@@ -231,8 +233,9 @@ BossConsole supplies a translucent content background only when native glass is 
 coverage includes app surfaces. Bridge that into BossTerm's existing LocalNativeWindowGlass and
 LocalWindowGlassMode rather than changing SettingsManager or fading the whole terminal. Keep the
 wrapper surface transparent in glass mode so the host applies its tint once; opaque hosts and
-sidebar-only glass retain the terminal's normal background. This uses the existing API 1.0.95 and
-BossTerm 1.2.173 contracts. Local testing targets ~/.boss_debug/plugins, not the production directory.
+sidebar-only glass retain the terminal's normal background. The glass surface contracts originated in API 1.0.95 and BossTerm 1.2.173. The plugin now compiles
+against API 1.0.97 for terminal-link destination requests. Local testing targets
+~/.boss_debug/plugins, not the production directory.
 
 Active host glass also makes `HostTerminalThemeBridge` choose BossTerm’s bundled Liquid Glass
 Light/Dark theme before matching background colors, since Liquid Glass shares Blueprint’s floor.

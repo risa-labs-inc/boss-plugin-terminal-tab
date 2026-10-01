@@ -12,6 +12,8 @@ import kotlin.test.assertNull
  */
 class TerminalLinksTest {
     private val calls = mutableListOf<String>()
+    private var supportsChooser = true
+    private var missingCapability = false
 
     private val operations =
         Proxy.newProxyInstance(
@@ -19,6 +21,7 @@ class TerminalLinksTest {
             arrayOf(SplitViewOperations::class.java),
         ) { proxy, method, args ->
             when (method.name) {
+                "getSupportsOpenTerminalLink" -> if (missingCapability) throw NoSuchMethodError("supportsOpenTerminalLink") else supportsChooser
                 "hashCode" -> System.identityHashCode(proxy)
                 "equals" -> proxy === args?.firstOrNull()
                 "toString" -> "SplitViewOperations"
@@ -30,22 +33,63 @@ class TerminalLinksTest {
         } as SplitViewOperations
 
     @Test
-    fun `a web link opens in a browser tab`() {
-        openTerminalLink(operations, TerminalLinkTarget.Web("https://example.com/x"))
-        assertEquals(listOf("openUrlInActivePanel(https://example.com/x, https://example.com/x, false)"), calls)
+    fun `a web link requests the host chooser without opening a tab`() {
+        openTerminalLink(operations, TerminalLinkTarget.Web("https://example.com/x"), "terminal-1")
+        assertEquals(listOf("openTerminalLink(https://example.com/x, terminal-1)"), calls)
     }
 
     @Test
-    fun `a file link opens at its line and column, or plainly without one`() {
-        openTerminalLink(operations, TerminalLinkTarget.File("/src/Foo.kt", 42, 7))
-        openTerminalLink(operations, TerminalLinkTarget.File("/src/Foo.kt", 0, 0))
+    fun `a provider without chooser support preserves ordinary URL and file opening`() {
+        supportsChooser = false
+        openTerminalLink(operations, TerminalLinkTarget.Web("https://example.com/x"), "t")
+        openTerminalLink(operations, TerminalLinkTarget.File("/src/Foo.kt", 42, 7), "t")
+        openTerminalLink(operations, TerminalLinkTarget.File("/src/Foo.kt", 0, 0), "t")
         assertEquals(
             listOf(
+                "openUrlInActivePanel(https://example.com/x, https://example.com/x, false)",
                 "openFileAtPosition(/src/Foo.kt, Foo.kt, 42, 7)",
                 "openFileInActivePanel(/src/Foo.kt, Foo.kt)",
             ),
             calls,
         )
+    }
+
+    @Test
+    fun `a missing capability member keeps the click's ordinary fallback`() {
+        missingCapability = true
+        openTerminalLink(operations, TerminalLinkTarget.Web("https://example.com/x"), "t")
+        assertEquals(listOf("openUrlInActivePanel(https://example.com/x, https://example.com/x, false)"), calls)
+    }
+
+    @Test
+    fun `file references preserve spaces and hash characters for the host parser`() {
+        openTerminalLink(operations, TerminalLinkTarget.File("/src/a #1?.kt", 12, 0), "t")
+        assertEquals(listOf("openTerminalLink(file:/src/a #1?.kt:12, t)"), calls)
+    }
+
+    @Test
+    fun `a file link requests the chooser with its line and column, or plainly without one`() {
+        openTerminalLink(operations, TerminalLinkTarget.File("/src/Foo.kt", 42, 7))
+        openTerminalLink(operations, TerminalLinkTarget.File("/src/Foo.kt", 0, 0))
+        assertEquals(
+            listOf(
+                "openTerminalLink(file:/src/Foo.kt:42:7, null)",
+                "openTerminalLink(file:/src/Foo.kt, null)",
+            ),
+            calls,
+        )
+    }
+
+    @Test
+    fun `canonical paths keep percent and plus characters when the host decodes the request`() {
+        openTerminalLink(operations, TerminalLinkTarget.File("/src/c++/100%25.kt", 12, 0), "terminal-2")
+        assertEquals(listOf("openTerminalLink(file:/src/c%2B%2B/100%2525.kt:12, terminal-2)"), calls)
+    }
+
+    @Test
+    fun `a Windows canonical path retains the drive and location suffix`() {
+        openTerminalLink(operations, TerminalLinkTarget.File("C:\\Users\\x\\Foo.kt", 42, 7), "windows-terminal")
+        assertEquals(listOf("openTerminalLink(file:C:\\Users\\x\\Foo.kt:42:7, windows-terminal)"), calls)
     }
 
     @Test

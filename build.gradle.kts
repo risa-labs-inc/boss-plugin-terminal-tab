@@ -150,10 +150,10 @@ kotlin {
 // Auto-detect CI environment
 val useLocalDependencies = System.getenv("CI") != "true"
 val bossPluginApiPath = providers.gradleProperty("bossPluginApiPath").orNull ?: "../boss-plugin-api"
-// Window-owned titlebar controls and call overlays require API 1.0.95.
+// Terminal-link destination requests require API 1.0.97 and the BOSS 9.5.34 host implementation.
 // Compile against the declared minimum so newer symbols cannot silently bypass
 // the compatibility gate. Keep both workflow pins aligned with this version.
-val bossPluginApiVersion = "1.0.95"
+val bossPluginApiVersion = "1.0.97"
 
 /**
  * The api jar this plugin compiles against locally: exactly [bossPluginApiVersion], the

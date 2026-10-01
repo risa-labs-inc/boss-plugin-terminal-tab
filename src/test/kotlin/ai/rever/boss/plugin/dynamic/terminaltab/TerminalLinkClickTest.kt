@@ -4,10 +4,13 @@ import ai.rever.boss.plugin.api.PluginContext
 import ai.rever.boss.plugin.api.SplitViewOperations
 import ai.rever.bossterm.compose.hyperlinks.HyperlinkInfo
 import ai.rever.bossterm.compose.hyperlinks.HyperlinkType
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import java.lang.reflect.Proxy
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -40,16 +43,18 @@ class TerminalLinkClickTest {
         hostCallContext = productionHostContext
     }
 
-    private val calls = mutableListOf<String>()
+    private val calls = java.util.Collections.synchronizedList(mutableListOf<String>())
+    private var onCall: (() -> Unit)? = null
 
     /** Register a window whose split-view operations record what they are asked to open. */
     private fun registerWindow(window: String) {
         val ops = Proxy.newProxyInstance(SplitViewOperations::class.java.classLoader, arrayOf(SplitViewOperations::class.java)) { proxy, method, args ->
             when (method.name) {
+                "getSupportsOpenTerminalLink" -> true
                 "hashCode" -> System.identityHashCode(proxy)
                 "equals" -> proxy === args?.firstOrNull()
                 "toString" -> "ops"
-                else -> { calls += "${method.name}(${args.orEmpty().joinToString()})"; null }
+                else -> { calls += "${method.name}(${args.orEmpty().joinToString()})"; onCall?.invoke(); null }
             }
         } as SplitViewOperations
         val context = Proxy.newProxyInstance(PluginContext::class.java.classLoader, arrayOf(PluginContext::class.java)) { proxy, method, args ->
@@ -81,7 +86,7 @@ class TerminalLinkClickTest {
     fun `a link that is not a web page is left to BossTerm, even with a window to open it in`() {
         registerWindow("w")
         assertTrue(handleTerminalLinkClick(link("https://example.com", HyperlinkType.HTTP), scope, "t", "w"))
-        assertEquals(listOf("openUrlInActivePanel(https://example.com, https://example.com, false)"), calls)
+        assertEquals(listOf("openTerminalLink(https://example.com, t)"), calls)
         calls.clear()
 
         assertFalse(handleTerminalLinkClick(link("boss://terminal?command=ls", HyperlinkType.HTTP), scope, "t", "w"))
@@ -93,5 +98,30 @@ class TerminalLinkClickTest {
     fun `with no window a web page falls back and a file is swallowed`() {
         assertFalse(handleTerminalLinkClick(link("https://example.com", HyperlinkType.HTTP), scope, "t", "w"))
         assertTrue(handleTerminalLinkClick(link("file:///tmp/run-me.sh", HyperlinkType.FILE), scope, "t", "w"))
+    }
+
+    @Test
+    fun `a sidebar click requests the chooser with the sidebar source identity`() {
+        registerWindow("w")
+        assertTrue(handleTerminalLinkClick(link("https://example.com", HyperlinkType.HTTP), scope, ai.rever.boss.plugin.api.SIDEBAR_TERMINAL_ID, "w"))
+        assertEquals(listOf("openTerminalLink(https://example.com, ${ai.rever.boss.plugin.api.SIDEBAR_TERMINAL_ID})"), calls)
+    }
+
+    @Test
+    fun `a file click carries its source terminal and location through the IO path`() = runBlocking {
+        registerWindow("w")
+        val file = java.nio.file.Files.createTempFile("terminal-link-", ".kt").toFile()
+        try {
+            val opened = CompletableDeferred<Unit>()
+            onCall = { opened.complete(Unit) }
+            assertTrue(handleTerminalLinkClick(
+                link("${file.toURI().toASCIIString()}:42:7", HyperlinkType.FILE),
+                scope, "file-terminal", "w",
+            ))
+            withTimeout(5000) { opened.await() }
+            assertEquals(listOf("openTerminalLink(file:${file.canonicalPath}:42:7, file-terminal)"), calls)
+        } finally {
+            file.delete()
+        }
     }
 }
