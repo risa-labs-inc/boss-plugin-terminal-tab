@@ -87,8 +87,9 @@ throw `ClassNotFoundException`, which silently broke the `cli` tool ("dispatcher
 - the window an MCP tool acts in is the last one a terminal composable saw focused (the host
   publishes no focus event to plugins), else the most recently registered;
 - a terminal link requests its own window's chooser through `SplitViewOperations.openTerminalLink`,
-  honoring Always Ask and remembered destinations. File requests retain line and column; a provider
-  whose `supportsOpenTerminalLink` is false keeps ordinary URL/file opening. Only `http` and `https` are opened as web links; any other
+  honoring Always Ask and remembered destinations. File requests retain line and column; providers
+  without chooser support keep ordinary URL/file opening. Only `http` and `https` are opened as web
+  links; any other
   scheme matched in terminal output (`boss://`, `javascript:`) is left to BossTerm, because
   terminal output can be written by anyone. A file link with no window to open in is swallowed,
   never passed to BossTerm's fallback, which would hand it to the OS opener.
@@ -233,7 +234,8 @@ coverage includes app surfaces. Bridge that into BossTerm's existing LocalNative
 LocalWindowGlassMode rather than changing SettingsManager or fading the whole terminal. Keep the
 wrapper surface transparent in glass mode so the host applies its tint once; opaque hosts and
 sidebar-only glass retain the terminal's normal background. The glass surface contracts originated in API 1.0.95 and BossTerm 1.2.173. The plugin now compiles
-against API 1.0.97 for terminal-link destination requests. Local testing targets ~/.boss_debug/plugins, not the production directory.
+against API 1.0.97 for terminal-link destination requests. Local testing targets
+~/.boss_debug/plugins, not the production directory.
 
 Active host glass also makes `HostTerminalThemeBridge` choose BossTerm’s bundled Liquid Glass
 Light/Dark theme before matching background colors, since Liquid Glass shares Blueprint’s floor.

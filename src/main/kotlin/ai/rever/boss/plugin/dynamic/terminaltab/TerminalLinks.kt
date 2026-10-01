@@ -6,7 +6,7 @@ import ai.rever.boss.plugin.api.SplitViewOperations
  * Where a link clicked in a terminal goes, through the plugin API.
  *
  * The host's event bus is inaccessible across the plugin classloader. The host-implemented
- * SplitViewOperations.openTerminalLink API routes requests to that bus, preserving the
+ * SplitViewOperations.openTerminalLink host implementation routes requests to that bus, preserving the
  * destination chooser and the user's remembered choice.
  */
 internal sealed interface TerminalLinkTarget {
@@ -34,7 +34,12 @@ internal fun openTerminalLink(
     target: TerminalLinkTarget,
     sourceTerminalId: String? = null,
 ) {
-    if (!operations.supportsOpenTerminalLink) {
+    val supportsChooser = try {
+        operations.supportsOpenTerminalLink
+    } catch (_: LinkageError) {
+        false
+    }
+    if (!supportsChooser) {
         when (target) {
             is TerminalLinkTarget.Web -> operations.openUrlInActivePanel(target.url, target.url)
             is TerminalLinkTarget.File -> if (target.line > 0) {

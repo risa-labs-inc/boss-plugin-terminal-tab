@@ -5,12 +5,12 @@ import ai.rever.boss.plugin.api.SplitViewOperations
 import ai.rever.bossterm.compose.hyperlinks.HyperlinkInfo
 import ai.rever.bossterm.compose.hyperlinks.HyperlinkType
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import java.lang.reflect.Proxy
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -43,7 +43,7 @@ class TerminalLinkClickTest {
         hostCallContext = productionHostContext
     }
 
-    private val calls = mutableListOf<String>()
+    private val calls = java.util.Collections.synchronizedList(mutableListOf<String>())
     private var onCall: (() -> Unit)? = null
 
     /** Register a window whose split-view operations record what they are asked to open. */
@@ -98,6 +98,13 @@ class TerminalLinkClickTest {
     fun `with no window a web page falls back and a file is swallowed`() {
         assertFalse(handleTerminalLinkClick(link("https://example.com", HyperlinkType.HTTP), scope, "t", "w"))
         assertTrue(handleTerminalLinkClick(link("file:///tmp/run-me.sh", HyperlinkType.FILE), scope, "t", "w"))
+    }
+
+    @Test
+    fun `a sidebar click requests the chooser with the sidebar source identity`() {
+        registerWindow("w")
+        assertTrue(handleTerminalLinkClick(link("https://example.com", HyperlinkType.HTTP), scope, ai.rever.boss.plugin.api.SIDEBAR_TERMINAL_ID, "w"))
+        assertEquals(listOf("openTerminalLink(https://example.com, ${ai.rever.boss.plugin.api.SIDEBAR_TERMINAL_ID})"), calls)
     }
 
     @Test

@@ -13,6 +13,7 @@ import kotlin.test.assertNull
 class TerminalLinksTest {
     private val calls = mutableListOf<String>()
     private var supportsChooser = true
+    private var missingCapability = false
 
     private val operations =
         Proxy.newProxyInstance(
@@ -20,7 +21,7 @@ class TerminalLinksTest {
             arrayOf(SplitViewOperations::class.java),
         ) { proxy, method, args ->
             when (method.name) {
-                "getSupportsOpenTerminalLink" -> supportsChooser
+                "getSupportsOpenTerminalLink" -> if (missingCapability) throw NoSuchMethodError("supportsOpenTerminalLink") else supportsChooser
                 "hashCode" -> System.identityHashCode(proxy)
                 "equals" -> proxy === args?.firstOrNull()
                 "toString" -> "SplitViewOperations"
@@ -51,6 +52,19 @@ class TerminalLinksTest {
             ),
             calls,
         )
+    }
+
+    @Test
+    fun `a missing capability member keeps the click's ordinary fallback`() {
+        missingCapability = true
+        openTerminalLink(operations, TerminalLinkTarget.Web("https://example.com/x"), "t")
+        assertEquals(listOf("openUrlInActivePanel(https://example.com/x, https://example.com/x, false)"), calls)
+    }
+
+    @Test
+    fun `file references preserve spaces and hash characters for the host parser`() {
+        openTerminalLink(operations, TerminalLinkTarget.File("/src/a #1?.kt", 12, 0), "t")
+        assertEquals(listOf("openTerminalLink(file:/src/a #1?.kt:12, t)"), calls)
     }
 
     @Test
