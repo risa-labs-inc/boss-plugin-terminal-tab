@@ -81,7 +81,7 @@ class TerminalLinkClickTest {
     fun `a link that is not a web page is left to BossTerm, even with a window to open it in`() {
         registerWindow("w")
         assertTrue(handleTerminalLinkClick(link("https://example.com", HyperlinkType.HTTP), scope, "t", "w"))
-        assertEquals(listOf("openUrlInActivePanel(https://example.com, https://example.com, false)"), calls)
+        assertEquals(listOf("openTerminalLink(https://example.com, t)"), calls)
         calls.clear()
 
         assertFalse(handleTerminalLinkClick(link("boss://terminal?command=ls", HyperlinkType.HTTP), scope, "t", "w"))

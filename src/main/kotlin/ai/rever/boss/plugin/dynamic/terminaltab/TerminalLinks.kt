@@ -5,11 +5,9 @@ import ai.rever.boss.plugin.api.SplitViewOperations
 /**
  * Where a link clicked in a terminal goes, through the plugin API.
  *
- * These used to be emitted on the host's `TerminalLinkEventBus` by reflection, which the plugin
- * classloader refuses since BOSS 9.5.25 (see [HostWindows]), so every click logged "Failed to emit
- * terminal link click" and did nothing. The host's ask-or-remember link dialog listens only on
- * that bus and has no plugin-API equivalent, so a web link now opens straight in a browser tab
- * and a file at its line; bringing the dialog back needs a host-implemented API.
+ * The host's event bus is inaccessible across the plugin classloader. The host-implemented
+ * SplitViewOperations.openTerminalLink API routes requests to that bus, preserving the
+ * destination chooser and the user's remembered choice.
  */
 internal sealed interface TerminalLinkTarget {
     data class Web(val url: String) : TerminalLinkTarget
@@ -30,17 +28,26 @@ internal fun webLinkTarget(url: String): TerminalLinkTarget.Web? {
     return if (scheme == "http" || scheme == "https") TerminalLinkTarget.Web(url) else null
 }
 
-/** Open [target] in the window that [operations] belong to. Call on the UI thread. */
-internal fun openTerminalLink(operations: SplitViewOperations, target: TerminalLinkTarget) {
-    when (target) {
-        is TerminalLinkTarget.Web -> operations.openUrlInActivePanel(target.url, target.url)
-        is TerminalLinkTarget.File ->
+/** Request [target] through the host's chooser and remembered preference. Call on the UI thread. */
+internal fun openTerminalLink(
+    operations: SplitViewOperations,
+    target: TerminalLinkTarget,
+    sourceTerminalId: String? = null,
+) {
+    val url = when (target) {
+        is TerminalLinkTarget.Web -> target.url
+        is TerminalLinkTarget.File -> buildString {
+            // The host decodes the file reference; escape literal percent and plus characters
+            // so canonical paths survive that decoding unchanged.
+            append("file:")
+            append(target.path.replace("%", "%25").replace("+", "%2B"))
             if (target.line > 0) {
-                operations.openFileAtPosition(target.path, target.fileName, target.line, target.column)
-            } else {
-                operations.openFileInActivePanel(target.path, target.fileName)
+                append(":").append(target.line)
+                if (target.column > 0) append(":").append(target.column)
             }
+        }
     }
+    operations.openTerminalLink(url, sourceTerminalId)
 }
 
 /**

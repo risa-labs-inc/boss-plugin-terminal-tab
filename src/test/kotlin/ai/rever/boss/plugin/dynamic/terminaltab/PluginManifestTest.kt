@@ -11,14 +11,14 @@ import kotlin.test.assertTrue
 
 class PluginManifestTest {
     @Test
-    fun `hosted controls require the host release containing the bridge`() {
+    fun `terminal link chooser requires the host release containing its API`() {
         val resource = assertNotNull(javaClass.classLoader.getResource("META-INF/boss-plugin/plugin.json"))
         val manifest = Json.parseToJsonElement(resource.readText()).jsonObject
         val minimum = assertNotNull(manifest["minBossVersion"]).jsonPrimitive.content
         val parts = minimum.split('.').map(String::toInt)
         assertEquals(3, parts.size)
-        val difference = parts.zip(listOf(9, 5, 30)).firstOrNull { (actual, required) -> actual != required }
-        assertTrue(difference == null || difference.first > difference.second, "Host must include the titlebar bridge")
+        val difference = parts.zip(listOf(9, 5, 34)).firstOrNull { (actual, required) -> actual != required }
+        assertTrue(difference == null || difference.first > difference.second, "Host must include the terminal-link chooser API")
     }
 
     @Test

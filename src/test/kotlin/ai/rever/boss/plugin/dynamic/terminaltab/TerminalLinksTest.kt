@@ -30,22 +30,28 @@ class TerminalLinksTest {
         } as SplitViewOperations
 
     @Test
-    fun `a web link opens in a browser tab`() {
-        openTerminalLink(operations, TerminalLinkTarget.Web("https://example.com/x"))
-        assertEquals(listOf("openUrlInActivePanel(https://example.com/x, https://example.com/x, false)"), calls)
+    fun `a web link requests the host chooser without opening a tab`() {
+        openTerminalLink(operations, TerminalLinkTarget.Web("https://example.com/x"), "terminal-1")
+        assertEquals(listOf("openTerminalLink(https://example.com/x, terminal-1)"), calls)
     }
 
     @Test
-    fun `a file link opens at its line and column, or plainly without one`() {
+    fun `a file link requests the chooser with its line and column, or plainly without one`() {
         openTerminalLink(operations, TerminalLinkTarget.File("/src/Foo.kt", 42, 7))
         openTerminalLink(operations, TerminalLinkTarget.File("/src/Foo.kt", 0, 0))
         assertEquals(
             listOf(
-                "openFileAtPosition(/src/Foo.kt, Foo.kt, 42, 7)",
-                "openFileInActivePanel(/src/Foo.kt, Foo.kt)",
+                "openTerminalLink(file:/src/Foo.kt:42:7, null)",
+                "openTerminalLink(file:/src/Foo.kt, null)",
             ),
             calls,
         )
+    }
+
+    @Test
+    fun `canonical paths keep percent and plus characters when the host decodes the request`() {
+        openTerminalLink(operations, TerminalLinkTarget.File("/src/c++/100%25.kt", 12, 0), "terminal-2")
+        assertEquals(listOf("openTerminalLink(file:/src/c%2B%2B/100%2525.kt:12, terminal-2)"), calls)
     }
 
     @Test
