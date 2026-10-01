@@ -34,11 +34,23 @@ internal fun openTerminalLink(
     target: TerminalLinkTarget,
     sourceTerminalId: String? = null,
 ) {
+    if (!operations.supportsOpenTerminalLink) {
+        when (target) {
+            is TerminalLinkTarget.Web -> operations.openUrlInActivePanel(target.url, target.url)
+            is TerminalLinkTarget.File -> if (target.line > 0) {
+                operations.openFileAtPosition(target.path, target.fileName, target.line, target.column)
+            } else {
+                operations.openFileInActivePanel(target.path, target.fileName)
+            }
+        }
+        return
+    }
     val url = when (target) {
         is TerminalLinkTarget.Web -> target.url
         is TerminalLinkTarget.File -> buildString {
-            // The host decodes the file reference; escape literal percent and plus characters
-            // so canonical paths survive that decoding unchanged.
+            // This is the host's parseFileReference format, not a URI: it decodes before
+            // splitting :line[:column]. Escape percent/plus so canonical paths survive unchanged.
+            // Like the terminal parser, a literal :digits filename suffix remains ambiguous.
             append("file:")
             append(target.path.replace("%", "%25").replace("+", "%2B"))
             if (target.line > 0) {

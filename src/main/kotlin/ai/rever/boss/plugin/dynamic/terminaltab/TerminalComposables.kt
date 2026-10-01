@@ -422,6 +422,8 @@ internal fun handleTerminalLinkClick(info: HyperlinkInfo, scope: CoroutineScope,
 private fun openLink(operations: SplitViewOperations, target: TerminalLinkTarget, terminalId: String?) {
     try {
         openTerminalLink(operations, target, terminalId)
+    } catch (e: LinkageError) {
+        logger.warn(LogCategory.TERMINAL, "Host does not support the terminal-link chooser API", error = e)
     } catch (e: Exception) {
         logger.warn(LogCategory.TERMINAL, "Failed to open terminal link", error = e)
     }
