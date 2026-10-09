@@ -452,16 +452,6 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
      * make the folder look populated when the platform subdir is empty).
      * Runs at plugin load, before any terminal tab — and thus any PTY — exists.
      */
-    private fun neutralizeStalePty4jNativeFolder() {
-        try {
-            if (System.getProperty("pty4j.preferred.native.folder") != null) {
-                System.clearProperty("pty4j.preferred.native.folder")
-            }
-        } catch (_: Throwable) {
-            // Best-effort: never let native-path housekeeping block plugin load.
-        }
-    }
-
     private fun logAccountFailure(operation: String, failure: Throwable) {
         // Exception messages can contain bearer URLs or E2E secrets.
         mcpLogger.warn(LogCategory.TERMINAL, "$operation failed (${failure.javaClass.simpleName})")

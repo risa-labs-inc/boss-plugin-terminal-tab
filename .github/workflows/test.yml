@@ -36,7 +36,7 @@ jobs:
       # and the manifest; PluginManifestTest verifies that they agree.
       - name: Download boss-plugin-api
         env:
-          API_VERSION: '1.0.97'
+          API_VERSION: '1.0.99'
         run: |
           set -euo pipefail
           mkdir -p build/downloaded-deps

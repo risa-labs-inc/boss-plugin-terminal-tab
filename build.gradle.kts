@@ -150,10 +150,10 @@ kotlin {
 // Auto-detect CI environment
 val useLocalDependencies = System.getenv("CI") != "true"
 val bossPluginApiPath = providers.gradleProperty("bossPluginApiPath").orNull ?: "../boss-plugin-api"
-// Terminal-link destination requests require API 1.0.97 and the BOSS 9.5.34 host implementation.
+// Shared daemon services require API 1.0.99 and the BOSS 9.5.44 host implementation.
 // Compile against the declared minimum so newer symbols cannot silently bypass
 // the compatibility gate. Keep both workflow pins aligned with this version.
-val bossPluginApiVersion = "1.0.97"
+val bossPluginApiVersion = "1.0.99"
 
 /**
  * The api jar this plugin compiles against locally: exactly [bossPluginApiVersion], the
@@ -277,7 +277,8 @@ val pinnedLocalApiJar = provider {
 // Includes host account isolation, relay tickets and account viewing preferences.
 // Upstream owns the host-compatible FontUtils/ImageRenderer implementations.
 // CurrentHostFontUtilsTest/CurrentHostImageRendererTest exercise the bundled classes.
-val bosstermVersion = "1.2.182"
+val bosstermVersion = "1.2.183"
+val resolvedBossTermVersion = providers.gradleProperty("bossTermDevelopmentVersion").orNull ?: bosstermVersion
 
 repositories {
     if (providers.gradleProperty("useLocalBossTerm").orNull == "true") {
@@ -310,7 +311,7 @@ dependencies {
     // classloader resolves these classes from its own URLs; Compose Multiplatform
     // runtime classes still come from the host classloader (shared Compose
     // runtime — only one Window owner per JVM).
-    implementation("com.risaboss:bossterm-compose:$bosstermVersion")
+    implementation("com.risaboss:bossterm-compose:$resolvedBossTermVersion")
 
     // bossterm-core, for the command-block types `tabActivity` reads. It is already on the
     // runtime classpath and already bundled into the plugin jar (the filter below matches
@@ -318,7 +319,7 @@ dependencies {
     // the COMPILE classpath - the same reason `compose.ui` is repeated for tests further down.
     // Without it, naming `CommandBlockTracker` fails on its supertype `CommandStateListener`.
     // compileOnly, so nothing is added to the jar that is not already there.
-    compileOnly("com.risaboss:bossterm-core-jvm:$bosstermVersion")
+    compileOnly("com.risaboss:bossterm-core-jvm:$resolvedBossTermVersion")
 
     // Compose and its Skia/Skiko rendering runtime belong to BossConsole.
     // BossTerm passes Skia images into host Compose; bundling another copy breaks type identity.
@@ -345,7 +346,7 @@ dependencies {
     // JVM test. bossterm-compose is already `implementation`, so the voice seam
     // (ExternalVoiceTool / VoiceToolPolicy) comes along for free.
     testImplementation(kotlin("test"))
-    testImplementation("com.risaboss:bossterm-core-jvm:$bosstermVersion")
+    testImplementation("com.risaboss:bossterm-core-jvm:$resolvedBossTermVersion")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     // The Compose compiler plugin runs over the test compilation too and refuses to
     // work without the runtime on the class path, even though no test touches a

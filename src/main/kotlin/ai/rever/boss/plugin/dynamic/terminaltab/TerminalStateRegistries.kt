@@ -137,6 +137,8 @@ object TabbedTerminalStateRegistry {
         // Unregister from the MCP registry BEFORE dispose so MCP request threads
         // never resolve a tab to a disposed state.
         states.remove(key(windowId, terminalId))?.let { state ->
+            HostedTerminalBindings.close(state)
+            HostedTerminalBindings.detach(state, forUnload = true)
             McpTerminalRegistry.unregister(state)
             state.dispose()
         }
@@ -342,6 +344,7 @@ object TabbedTerminalStateRegistry {
     }
 
     private fun disposeState(state: TabbedTerminalState, forUnload: Boolean = false) {
+        HostedTerminalBindings.detach(state, forUnload)
         try {
             McpTerminalRegistry.unregister(state)
         } finally {
@@ -349,7 +352,11 @@ object TabbedTerminalStateRegistry {
         }
     }
 
-    fun resetAllTerminals(): Int = clearAll(forUnload = false)
+    fun resetAllTerminals(): Int {
+        // Complete explicit daemon shutdown before the replacement composition reconnects.
+        states.values.toList().forEach { HostedTerminalBindings.close(it) }
+        return clearAll(forUnload = false)
+    }
 
     internal fun disposeAllForUnload(): Int = clearAll(forUnload = true)
 

@@ -73,6 +73,8 @@ internal fun TabbedTerminalContentImpl(
     val pendingCommand = remember { if (isNew) consumePendingSidebarCommand(windowId) else null }
     val sidebarSettings = remember { TerminalSettingsOverride(alwaysShowTabBar = true) }
     val effectiveWorkingDir = pendingCommand?.workingDirectory ?: workingDirectory
+    val daemonMode = terminalDaemonMode(state, windowId, SIDEBAR_TERMINAL_ID, effectiveWorkingDir,
+        pendingCommand?.command?.let(::normalizeCommandForWindows)) ?: return
 
     LaunchedEffect(settings.onboardingCompleted) {
         if (!settings.onboardingCompleted) TerminalPluginContextHolder.setupSupervisor?.requestSetup(windowId)
@@ -134,6 +136,7 @@ internal fun TabbedTerminalContentImpl(
               ) {
                 TabbedTerminal(
                     state = state,
+                    daemonMode = daemonMode,
                     headerContent = terminalTitleBarHeader(windowId),
                     initialCommand = normalizedPendingCommand,
                     workingDirectory = effectiveWorkingDir,
@@ -184,7 +187,8 @@ internal fun PersistentTabbedTerminalContentImpl(
     onShowSettings: () -> Unit,
     onTitleChange: ((String) -> Unit)?,
     onLinkClick: ((url: String, linkType: String) -> Boolean)?,
-    sessionEventPublisher: ((sessionId: String, eventType: ai.rever.boss.plugin.api.TerminalSessionEventType, terminalId: String?, windowId: String?) -> Unit)? = null
+    sessionEventPublisher: ((sessionId: String, eventType: ai.rever.boss.plugin.api.TerminalSessionEventType, terminalId: String?, windowId: String?) -> Unit)? = null,
+    settingsOverride: TerminalSettingsOverride? = null
 ) {
     val resetGeneration by TabbedTerminalStateRegistry.resetGeneration.collectAsState()
     val settings by SettingsManager.instance.settings.collectAsState()
@@ -207,6 +211,8 @@ internal fun PersistentTabbedTerminalContentImpl(
         TabbedTerminalStateRegistry.getOrCreate(windowId, terminalId)
     } ?: return
     val effectiveWorkingDir = if (isNew) workingDirectory else null
+    val daemonMode = terminalDaemonMode(state, windowId, terminalId, effectiveWorkingDir,
+        if (isNew) initialCommand else null) ?: return
 
     LaunchedEffect(settings.onboardingCompleted) {
         if (!settings.onboardingCompleted) TerminalPluginContextHolder.setupSupervisor?.requestSetup(windowId)
@@ -280,6 +286,8 @@ internal fun PersistentTabbedTerminalContentImpl(
               ) {
                 TabbedTerminal(
                     state = state,
+                    daemonMode = daemonMode,
+                    settingsOverride = settingsOverride,
                     headerContent = terminalTitleBarHeader(windowId),
                     initialCommand = normalizedInitialCommand,
                     workingDirectory = effectiveWorkingDir,
@@ -326,6 +334,19 @@ internal fun TerminalContentImpl(
     workingDirectory: String?,
     onExit: () -> Unit
 ) {
+    val daemonWindow = LocalWindowIdProvider.current?.getWindowId()
+    if (daemonWindow != null && HostWindows.daemonFor(daemonWindow) != null &&
+        SettingsManager.instance.settings.value.daemonEnabled) {
+        val hostedId = terminalId ?: remember { "anonymous:${java.util.UUID.randomUUID()}" }
+        if (terminalId == null) {
+            DisposableEffect(daemonWindow, hostedId) {
+                onDispose { TabbedTerminalStateRegistry.remove(daemonWindow, hostedId) }
+            }
+        }
+        PersistentTabbedTerminalContentImpl(hostedId, initialCommand, workingDirectory, onExit, {}, null, null,
+            settingsOverride = remember { TerminalSettingsOverride(alwaysShowTabBar = false) })
+        return
+    }
     val resetGeneration by TabbedTerminalStateRegistry.resetGeneration.collectAsState()
     val settings by SettingsManager.instance.settings.collectAsState()
     val scope = rememberCoroutineScope()
