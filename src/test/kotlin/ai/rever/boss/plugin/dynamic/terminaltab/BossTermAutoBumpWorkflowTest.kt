@@ -38,7 +38,8 @@ class BossTermAutoBumpWorkflowTest {
         val project = File(assertNotNull(System.getProperty("pluginProjectDir")))
         val lines = File(project, ".github/workflows/bossterm-autobump.yml").readLines()
         return lines.indices.filter { lines[it].trim() == "- name: $stepName" }.map { step ->
-            lines.drop(step).dropWhile { it.trim() != "run: |" }.drop(1)
+            lines.drop(step + 1).takeWhile { it.isBlank() || it.startsWith("        ") }
+                .dropWhile { it.trim() != "run: |" }.drop(1)
                 .takeWhile { it.isBlank() || it.startsWith("          ") }
                 .joinToString("\n").trimIndent().also {
                     assertTrue(it.isNotBlank(), "$stepName shell block not found")

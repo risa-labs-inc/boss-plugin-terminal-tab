@@ -75,7 +75,14 @@ jobs:
   validate:
     needs: prepare
     if: needs.prepare.outputs.changed == 'true' && needs.prepare.outputs.existing == 'false'
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     permissions:
       contents: read
     steps:
@@ -113,10 +120,18 @@ jobs:
             "https://github.com/risa-labs-inc/boss-plugin-api/releases/download/v${API_VERSION}/boss-plugin-api-${API_VERSION}.jar"
 
       - name: Install test dependencies
+        if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq fish zsh xvfb xauth
 
       - name: Validate BossTerm upgrade before merge
+        if: runner.os == 'Linux'
         run: xvfb-run -a ./gradlew build --no-daemon
+        env:
+          CI: 'true'
+
+      - name: Verify Windows scripts before merge
+        if: runner.os == 'Windows'
+        run: ./gradlew test --tests '*HostAccountSessionBridgeTest' --tests '*OnboardingInstallScriptTest' --tests '*PluginManifestTest' --tests '*SidebarEnvInjectionTest' buildPluginJar --no-daemon
         env:
           CI: 'true'
 
