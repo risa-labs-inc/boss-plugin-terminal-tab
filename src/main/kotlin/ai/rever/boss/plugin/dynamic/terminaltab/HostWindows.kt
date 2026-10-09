@@ -55,6 +55,7 @@ internal object HostWindows {
         synchronized(lock) {
             val removed = contexts.filterValues { it === context }.keys
             surfaceSlots.keys.removeAll { it.second in removed }
+            terminalModes.keys.removeAll { it.first in removed }
             contexts.entries.removeAll { it.value === context }
             contexts.isEmpty()
         }
@@ -88,6 +89,15 @@ internal object HostWindows {
             context?.splitViewOperations
         }
 
+    private val terminalModes = mutableMapOf<Pair<String, String>, Pair<Int, Boolean>>()
+
+    fun terminalMode(windowId: String, terminalId: String, generation: Int, select: () -> Boolean): Boolean = synchronized(lock) {
+        val key = windowId to terminalId
+        val previous = terminalModes[key]
+        if (previous?.first == generation) previous.second
+        else select().also { terminalModes[key] = generation to it }
+    }
+
     fun daemonFor(windowId: String): ai.rever.boss.plugin.api.DaemonServiceProvider? = synchronized(lock) {
         (contexts[windowId] ?: contexts[UNKNOWN_WINDOW])?.daemonServiceProvider
     }
@@ -103,8 +113,10 @@ internal object HostWindows {
             val occupied = surfaceSlots.filterKeys { it.first == workspaceKey }.values.toSet()
             generateSequence(0) { it + 1 }.first { it !in occupied }
         }
-        // Length-prefixed fields prevent ambiguous ids, including workspace paths containing colons.
-        "${workspaceKey.length}:$workspaceKey:$slot:$terminalId"
+        // Hash length-prefixed fields: identities are bounded and disclose no local paths.
+        val identity = "${workspaceKey.length}:$workspaceKey:$slot:$terminalId"
+        "terminal:" + java.security.MessageDigest.getInstance("SHA-256")
+            .digest(identity.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
     }
 
     /**
@@ -120,7 +132,7 @@ internal object HostWindows {
 
     /** Forget everything; tests only. */
     internal fun resetForTest() {
-        synchronized(lock) { contexts.clear(); surfaceSlots.clear() }
+        synchronized(lock) { contexts.clear(); surfaceSlots.clear(); terminalModes.clear() }
         lastFocused = null
     }
 }

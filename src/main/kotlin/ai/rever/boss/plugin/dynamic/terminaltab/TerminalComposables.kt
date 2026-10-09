@@ -334,20 +334,31 @@ internal fun TerminalContentImpl(
     workingDirectory: String?,
     onExit: () -> Unit
 ) {
+    val resetGeneration by TabbedTerminalStateRegistry.resetGeneration.collectAsState()
     val daemonWindow = LocalWindowIdProvider.current?.getWindowId()
-    if (daemonWindow != null && HostWindows.daemonFor(daemonWindow) != null &&
-        SettingsManager.instance.settings.value.daemonEnabled) {
+    // Mode belongs to this retained terminal lifetime. A settings change applies on reset/reload,
+    // rather than swapping registries and abandoning a live shell during recomposition.
+    val useDaemon = remember(daemonWindow, terminalId, resetGeneration) {
+        val select = {
+            daemonWindow != null && HostWindows.daemonFor(daemonWindow) != null &&
+                SettingsManager.instance.settings.value.daemonEnabled
+        }
+        if (daemonWindow != null && terminalId != null) {
+            HostWindows.terminalMode(daemonWindow, terminalId, resetGeneration, select)
+        } else select()
+    }
+    if (daemonWindow != null && useDaemon) {
         val hostedId = terminalId ?: remember { "anonymous:${java.util.UUID.randomUUID()}" }
         if (terminalId == null) {
             DisposableEffect(daemonWindow, hostedId) {
                 onDispose { TabbedTerminalStateRegistry.remove(daemonWindow, hostedId) }
             }
         }
-        PersistentTabbedTerminalContentImpl(hostedId, initialCommand, workingDirectory, onExit, {}, null, null,
+        PersistentTabbedTerminalContentImpl(hostedId, initialCommand, workingDirectory, onExit,
+            onShowSettings = {}, onTitleChange = null, onLinkClick = null,
             settingsOverride = remember { TerminalSettingsOverride(alwaysShowTabBar = false) })
         return
     }
-    val resetGeneration by TabbedTerminalStateRegistry.resetGeneration.collectAsState()
     val settings by SettingsManager.instance.settings.collectAsState()
     val scope = rememberCoroutineScope()
     val windowId = LocalWindowIdProvider.current?.getWindowId() ?: return

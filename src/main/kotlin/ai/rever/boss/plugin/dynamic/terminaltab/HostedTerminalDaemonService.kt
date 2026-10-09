@@ -5,21 +5,23 @@ import ai.rever.boss.plugin.api.DaemonServiceContext
 import ai.rever.bossterm.compose.TerminalRuntimeLifecycle
 import ai.rever.bossterm.compose.daemon.DaemonAttachProtocol
 import ai.rever.bossterm.compose.daemon.HostedTerminalPool
-import kotlinx.serialization.json.*
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /** Background entry point. It intentionally receives no PluginContext, windows or UI callbacks. */
 class HostedTerminalDaemonService : DaemonService {
     private var pool: HostedTerminalPool? = null
-    private var environment: Map<String, String> = emptyMap()
 
     override suspend fun start(context: DaemonServiceContext, configuration: Map<String, String>): Map<String, String> {
-        System.setProperty("bossterm.settings.dir", requireNotNull(configuration["settingsDirectory"]))
+        val directory = requireNotNull(configuration["settingsDirectory"]) { "Missing terminal settings directory" }
+        require(directory.isNotBlank()) { "Blank terminal settings directory" }
+        // The host runs one daemon per profile; this property never crosses BOSS profiles.
+        System.setProperty("bossterm.settings.dir", directory)
         TerminalRuntimeLifecycle.activateHostLifetime()
         // A hosted worker must never adopt a standalone BossTerm account from disk.
         ai.rever.bossterm.compose.share.AccountSessionSource.disconnect()
         neutralizeStalePty4jNativeFolder()
-        environment = mapOf("BOSS_MCP_SERVER" to "boss")
-        pool = HostedTerminalPool { environment }
+        pool = HostedTerminalPool { mapOf("BOSS_MCP_SERVER" to "boss") }
         return mapOf("attachProtocol" to DaemonAttachProtocol.PROTOCOL_VERSION.toString())
     }
 
@@ -40,7 +42,9 @@ class HostedTerminalDaemonService : DaemonService {
 
     override suspend fun stop() {
         try { pool?.close() }
-        finally { TerminalRuntimeLifecycle.shutdownForUnload() }
-        pool = null
+        finally {
+            try { TerminalRuntimeLifecycle.shutdownForUnload() }
+            finally { pool = null }
+        }
     }
 }

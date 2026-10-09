@@ -80,6 +80,20 @@ class HostWindowsTest {
     }
 
     @Test
+    fun `terminal mode survives recomposition until reset or UI reload`() {
+        assertTrue(HostWindows.terminalMode("window", "terminal", 0) { true })
+        assertTrue(HostWindows.terminalMode("window", "terminal", 0) { false })
+        assertFalse(HostWindows.terminalMode("window", "terminal", 1) { false })
+    }
+
+    @Test
+    fun `daemon identities stay bounded for long runner ids`() {
+        val first = HostWindows.terminalIdentity("window", "a".repeat(2000))
+        assertTrue(first.length < 512)
+        assertTrue(first != HostWindows.terminalIdentity("window", "a".repeat(1999) + "b"))
+    }
+
+    @Test
     fun `daemon surfaces survive reopened windows without merging live siblings`() {
         val first = context("old-window")
         HostWindows.register(first)
