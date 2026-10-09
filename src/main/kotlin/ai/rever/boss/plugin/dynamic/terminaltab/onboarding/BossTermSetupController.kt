@@ -211,7 +211,10 @@ object BossTermSetupController {
             tasks = plans.map { it.state },
             authenticateGitHubAfterSetup = selections.authenticateGitHub,
         )
-        initializeTerminal(windowId, sessionId)
+        if (!initializeTerminal(windowId, sessionId)) {
+            abortForPluginDispose()
+            return false
+        }
 
         activeSessionJob = scope.launch {
             failSessionOnUnexpectedError(sessionId, supervisor) {
@@ -828,8 +831,9 @@ object BossTermSetupController {
         } ?: lastTerminalOutputForTest
     }
 
-    private fun initializeTerminal(windowId: String, sessionId: String) {
+    private fun initializeTerminal(windowId: String, sessionId: String): Boolean {
         val containerId = "bossterm-setup-$sessionId"
+        val terminal = TabbedTerminalStateRegistry.getOrCreate(windowId, containerId) ?: return false
         val setupTabId = "bossterm-setup-tab-$sessionId"
         val readyToken = UUID.randomUUID().toString().replace("-", "")
         val readyMarker = "__BOSS_SETUP_READY_${readyToken}__"
@@ -838,7 +842,6 @@ object BossTermSetupController {
         terminalTabId = setupTabId
         terminalReadyMarker = readyMarker
         terminalReadyCommand = if (TargetOs.current().isWindows) "echo $readyMarker" else "printf '\\n$readyMarker\\n'"
-        val terminal = TabbedTerminalStateRegistry.getOrCreate(windowId, containerId)
         // Setup commands remain private to the dedicated, request-token-guarded MCP tools.
         McpTerminalRegistry.unregister(terminal)
         updateSession(sessionId) {
@@ -867,6 +870,7 @@ object BossTermSetupController {
                 delay(TERMINAL_READY_POLL_MS)
             }
         }
+        return true
     }
 
     /** Harmless task-runner seam for PTY lifecycle tests; callers supply the complete test script. */
@@ -896,7 +900,10 @@ object BossTermSetupController {
             supervisionChecked = true,
             authenticateGitHubAfterSetup = authenticateGitHub,
         )
-        initializeTerminal("test-window", sessionId)
+        if (!initializeTerminal("test-window", sessionId)) {
+            abortForPluginDispose()
+            return false
+        }
         activeSessionJob = scope.launch {
             // Same guard as start(), so tests exercise the real unexpected-failure path.
             failSessionOnUnexpectedError(sessionId, supervisor) {

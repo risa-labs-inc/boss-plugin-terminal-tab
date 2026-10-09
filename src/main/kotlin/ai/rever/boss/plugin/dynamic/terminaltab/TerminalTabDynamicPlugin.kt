@@ -12,6 +12,7 @@ import ai.rever.boss.plugin.ui.TerminalTitleBarBridge
 import ai.rever.bossterm.compose.mcp.McpTerminalRegistry
 import ai.rever.boss.plugin.dynamic.terminaltab.onboarding.BossTermSetupController
 import ai.rever.bossterm.compose.settings.SettingsManager
+import ai.rever.bossterm.compose.TerminalRuntimeLifecycle
 import ai.rever.bossterm.compose.share.AccountAutoRemote
 import ai.rever.bossterm.compose.share.AccountAutoShare
 import ai.rever.bossterm.compose.share.AccountSessionDirectory
@@ -135,6 +136,8 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
 
         pluginContext = context
         HostWindows.register(context)
+        TerminalRuntimeLifecycle.activateHostLifetime()
+        TerminalStateLifetime.register(context.windowId)
         // Install before any BossTerm UI/default singleton can restore a standalone login.
         try {
             val bridge = HostAccountSessionBridge(
@@ -493,7 +496,15 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
             // Persistent terminal states outlive composition. Stop their remote
             // parsers explicitly before the host unloads this plugin's classes.
             try {
-                disposeRetainedTerminalStates(context.windowId, lastWindow)
+                runTerminalDisposalOnUiThread {
+                    try {
+                        disposeRetainedTerminalStates(context.windowId, lastWindow)
+                    } finally {
+                        // Normal tab closure may already have removed states while their
+                        // reader/startup cleanup still runs. Join those retired engines too.
+                        if (lastWindow) TerminalRuntimeLifecycle.shutdownForUnload()
+                    }
+                }
             } catch (t: Throwable) {
                 mcpLogger.warn(LogCategory.TERMINAL, "Error disposing retained terminal states", error = t)
             }
