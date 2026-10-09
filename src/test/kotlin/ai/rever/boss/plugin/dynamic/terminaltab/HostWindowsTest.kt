@@ -108,7 +108,7 @@ class HostWindowsTest {
         HostWindows.noteFocused("w1")
         assertEquals("w1", HostWindows.targetWindowId())
 
-        HostWindows.unregister(first)
+        assertFalse(HostWindows.unregister(first))
         assertEquals("w2", HostWindows.targetWindowId())
     }
 
@@ -198,7 +198,7 @@ class HostWindowsTest {
         val only = context("w1")
         HostWindows.register(only)
         HostWindows.noteFocused("w1")
-        HostWindows.unregister(only)
+        assertTrue(HostWindows.unregister(only))
         assertNull(HostWindows.targetWindowId())
     }
 

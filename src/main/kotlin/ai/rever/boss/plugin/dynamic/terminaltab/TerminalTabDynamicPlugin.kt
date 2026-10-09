@@ -488,7 +488,16 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
     }
 
     override fun dispose() {
-        pluginContext?.let(HostWindows::unregister)
+        pluginContext?.let { context ->
+            val lastWindow = HostWindows.unregister(context)
+            // Persistent terminal states outlive composition. Stop their remote
+            // parsers explicitly before the host unloads this plugin's classes.
+            try {
+                disposeRetainedTerminalStates(context.windowId, lastWindow)
+            } catch (t: Throwable) {
+                mcpLogger.warn(LogCategory.TERMINAL, "Error disposing retained terminal states", error = t)
+            }
+        }
         runCatching { TerminalTitleBarBridge.unregisterProvider(this) }
             .onFailure { mcpLogger.warn(LogCategory.TERMINAL, "Could not unregister hosted titlebar controls", error = it) }
         stopAccountServices()

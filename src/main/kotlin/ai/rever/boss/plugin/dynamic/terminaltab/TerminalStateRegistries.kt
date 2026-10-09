@@ -311,6 +311,13 @@ internal object TerminalStateRegistry {
 
     fun contains(windowId: String, terminalId: String): Boolean = key(windowId, terminalId) in states
 
+    fun removeAllForWindow(windowId: String) {
+        val prefix = "$windowId:"
+        states.keys.filter { it.startsWith(prefix) }.forEach { key ->
+            states.remove(key)?.dispose()
+        }
+    }
+
     fun resetAll(): Int {
         val count = states.size
         states.values.forEach { state ->
@@ -324,6 +331,17 @@ internal object TerminalStateRegistry {
         _resetGeneration.value++
         logger.info(LogCategory.TERMINAL, "TerminalStateRegistry reset complete", mapOf("count" to count, "generation" to _resetGeneration.value))
         return count
+    }
+}
+
+/** Dispose retained states before the host can close this plugin's classloader. */
+internal fun disposeRetainedTerminalStates(windowId: String?, lastWindow: Boolean) {
+    try {
+        if (lastWindow) TabbedTerminalStateRegistry.resetAllTerminals()
+        else if (windowId != null) TabbedTerminalStateRegistry.removeAllForWindow(windowId)
+    } finally {
+        if (lastWindow) TerminalStateRegistry.resetAll()
+        else if (windowId != null) TerminalStateRegistry.removeAllForWindow(windowId)
     }
 }
 
