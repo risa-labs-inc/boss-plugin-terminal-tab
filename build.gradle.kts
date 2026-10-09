@@ -276,12 +276,9 @@ val pinnedLocalApiJar = provider {
 // synchronously to settings.json under bossterm.settings.dir:
 // applyCollapsedTabStripDefault reads it back right after updateSetting.
 // Includes host account isolation, relay tickets and account viewing preferences.
-// FontUtils/ImageRenderer checked against the hosted-controls source; verify again against release 1.2.173.
-val bosstermVersion = "1.2.173"
-// This source override must be reviewed (or removed) whenever BossTerm changes.
-check(bosstermVersion == "1.2.173") {
-    "Review the ImageRenderer and FontUtils overrides before upgrading BossTerm"
-}
+// Upstream owns the host-compatible FontUtils/ImageRenderer implementations.
+// CurrentHostFontUtilsTest/CurrentHostImageRendererTest exercise the bundled classes.
+val bosstermVersion = "1.2.180"
 
 repositories {
     if (providers.gradleProperty("useLocalBossTerm").orNull == "true") {
@@ -471,16 +468,7 @@ tasks.register<Jar>("buildPluginJar") {
                 // catches the transitive zxing:javase if it ever appears).
                 // zxing is not host-shared, so it must be bundled child-first.
                 jar.path.replace('\\', '/').contains("/com.google.zxing/")
-        }.map { dependency ->
-            zipTree(dependency).matching {
-                // The plugin compiles the same public API with host-owned rendering.
-                // Exclude upstream explicitly instead of relying on duplicate entry ordering.
-                exclude("ai/rever/bossterm/compose/util/FontUtilsKt.class")
-                exclude("ai/rever/bossterm/compose/util/FontUtilsKt$*.class")
-                exclude("ai/rever/bossterm/compose/rendering/ImageRenderer.class")
-                exclude("ai/rever/bossterm/compose/rendering/ImageRenderer$*.class")
-            }
-        }
+        }.map { zipTree(it) }
     })
 
     doLast {

@@ -35,6 +35,7 @@ class CurrentHostFontUtilsTest {
                 }
         }.use { loader ->
             assertFailsWith<ClassNotFoundException> { loader.loadClass("org.jetbrains.skia.FontMgr") }
+            // Exercise upstream BossTerm from the installable JAR, without a plugin override.
             val fonts = loader.loadClass(className)
             @Suppress("UNCHECKED_CAST")
             val categories = fonts.getMethod("getCategorizedFonts").invoke(null) as Map<String, List<String>>

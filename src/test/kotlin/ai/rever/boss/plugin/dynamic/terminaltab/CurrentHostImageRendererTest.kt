@@ -29,7 +29,7 @@ class CurrentHostImageRendererTest {
                 it.name.startsWith("org/jetbrains/skia/") || it.name.startsWith("org/jetbrains/skiko/")
             })
         }
-        // Load the shipped renderer child first and reproduce 9.5.25's Skia refusal.
+        // Load upstream BossTerm from the shipped JAR and reproduce 9.5.25's Skia refusal.
         // Compose and the model types are shared with the test to inspect the result.
         object : URLClassLoader(arrayOf(jar.toURI().toURL()), parent) {
             override fun loadClass(name: String, resolve: Boolean): Class<*> =

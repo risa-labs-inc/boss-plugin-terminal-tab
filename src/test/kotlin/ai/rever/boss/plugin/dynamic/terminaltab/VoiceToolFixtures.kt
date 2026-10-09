@@ -129,9 +129,9 @@ internal val LIVE_BOSS_TOOL_NAMES: List<String> = listOf(
  */
 internal val BOSSTERM_OWN_TOOL_NAMES: Set<String> = bossTermOwnToolNames
 
-/** What [bossTermOwnToolNames] is expected to contain: 13 built-ins + manage_tools. */
+/** What [bossTermOwnToolNames] is expected to contain: 14 built-ins + manage_tools. */
 internal val BOSSTERM_OWN_TOOL_NAMES_EXPECTED: Set<String> = setOf(
-    "list_tabs", "get_active_tab", "list_panes", "read_scrollback", "search_output",
+    "list_tabs", "list_machines", "get_active_tab", "list_panes", "read_scrollback", "search_output",
     "get_last_command", "read_debug_console", "send_input", "send_signal", "run_in_panel",
     "close_panel", "run_command", "show_image", "manage_tools",
 )
