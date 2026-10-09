@@ -270,10 +270,9 @@ val pinnedLocalApiJar = provider {
 // command palette, workflows, history search, session restore; compose-ui
 // compiles with -Xjvm-default=all (no $DefaultImpls bridges). 1.1.101 added
 // the `bossterm.settings.dir` relocation hook this plugin relies on.
-// On a bump, re-check that onLastTabClosed still fires only from
-// TabController.closeTab/extractTab (never disposeAll): TerminalTabComponent
-// closes the host tab from it. Also re-check that SettingsManager still saves
-// synchronously to settings.json under bossterm.settings.dir:
+// Embedder contracts: onLastTabClosed fires only from TabController.closeTab/extractTab
+// (never disposeAll), because TerminalTabComponent closes the host tab from it.
+// SettingsManager saves synchronously to settings.json under bossterm.settings.dir:
 // applyCollapsedTabStripDefault reads it back right after updateSetting.
 // Includes host account isolation, relay tickets and account viewing preferences.
 // Upstream owns the host-compatible FontUtils/ImageRenderer implementations.
@@ -375,8 +374,8 @@ tasks.withType<Test>().configureEach {
     // failure on a runner nobody can reproduce locally (the Windows job) is diagnosable.
     testLogging { exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL }
     useJUnitPlatform()
-    inputs.files(".github/workflows/build.yml", ".github/workflows/test.yml")
-        .withPropertyName("apiPinWorkflows")
+    inputs.files(".github/workflows/build.yml", ".github/workflows/test.yml", ".github/workflows/bossterm-autobump.yml")
+        .withPropertyName("pluginWorkflows")
         .withPathSensitivity(PathSensitivity.RELATIVE)
     dependsOn("buildPluginJar")
     systemProperty("pluginJar", layout.buildDirectory.file("libs/boss-plugin-terminal-tab-${version}.jar").get().asFile.absolutePath)

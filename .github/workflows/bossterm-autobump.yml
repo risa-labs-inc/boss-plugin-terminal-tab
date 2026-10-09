@@ -28,16 +28,25 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write        # push the bump branch + merge to main
-  pull-requests: write   # open and merge the PR
-  actions: write         # dispatch build.yml (the release) via gh workflow run
+  contents: read
 
 jobs:
-  autobump:
+  prepare:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      changed: ${{ steps.bump.outputs.changed }}
+      new_bt: ${{ steps.bump.outputs.new_bt }}
+      new_plugin: ${{ steps.bump.outputs.new_plugin }}
+      existing: ${{ steps.existing.outputs.found }}
+      base_sha: ${{ github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Resolve & prepare bump
         id: bump
@@ -61,19 +70,35 @@ jobs:
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # PRs opened with GITHUB_TOKEN do not trigger pull_request CI. Validate
-      # before merging here, rather than relying on the post-merge release build.
+  # Dependencies execute only here, without a repository write token or saved
+  # checkout credentials. No files or executable outputs flow into the write job.
+  validate:
+    needs: prepare
+    if: needs.prepare.outputs.changed == 'true' && needs.prepare.outputs.existing == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.base_sha }}
+          persist-credentials: false
+
+      - name: Recreate pinned bump
+        env:
+          TARGET_VERSION: ${{ needs.prepare.outputs.new_bt }}
+        run: bash .github/scripts/bump-bossterm.sh
+
       - uses: actions/setup-java@v4
-        if: steps.bump.outputs.changed == 'true' && steps.existing.outputs.found == 'false'
         with:
           distribution: temurin
           java-version: '17'
 
       - uses: gradle/actions/setup-gradle@v4
-        if: steps.bump.outputs.changed == 'true' && steps.existing.outputs.found == 'false'
+        with:
+          cache-read-only: true
 
       - name: Download declared boss-plugin-api
-        if: steps.bump.outputs.changed == 'true' && steps.existing.outputs.found == 'false'
         run: |
           set -euo pipefail
           API_VERSION=$(sed -n 's/^val bossPluginApiVersion = "\([^"]*\)"/\1/p' build.gradle.kts)
@@ -83,30 +108,48 @@ jobs:
             "https://github.com/risa-labs-inc/boss-plugin-api/releases/download/v${API_VERSION}/boss-plugin-api-${API_VERSION}.jar"
 
       - name: Install test dependencies
-        if: steps.bump.outputs.changed == 'true' && steps.existing.outputs.found == 'false'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq fish zsh xvfb xauth
 
       - name: Validate BossTerm upgrade before merge
-        id: validate
-        if: steps.bump.outputs.changed == 'true' && steps.existing.outputs.found == 'false'
         run: xvfb-run -a ./gradlew build --no-daemon
         env:
           CI: 'true'
 
+  publish:
+    needs: [prepare, validate]
+    # PRs created with GITHUB_TOKEN do not trigger pull_request CI. Failed
+    # validation must still reach this fresh job, but can only open a draft PR.
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.changed == 'true' && needs.prepare.outputs.existing == 'false' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.base_sha }}
+          persist-credentials: false
+
+      # Regenerate from trusted source; never consume files from validation.
+      - name: Recreate pinned bump
+        env:
+          TARGET_VERSION: ${{ needs.prepare.outputs.new_bt }}
+        run: bash .github/scripts/bump-bossterm.sh
+
       - name: Open, merge & release
-        if: ${{ !cancelled() && steps.bump.outputs.changed == 'true' && steps.existing.outputs.found == 'false' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          NEW_BT: ${{ steps.bump.outputs.new_bt }}
-          NEW_PLUGIN: ${{ steps.bump.outputs.new_plugin }}
+          NEW_BT: ${{ needs.prepare.outputs.new_bt }}
+          NEW_PLUGIN: ${{ needs.prepare.outputs.new_plugin }}
           DRY_RUN: ${{ inputs.dry_run }}
-          VALIDATION_OUTCOME: ${{ steps.validate.outcome }}
+          VALIDATION_OUTCOME: ${{ needs.validate.result }}
           VALIDATION_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           BR="bump/bossterm-${NEW_BT}"
 
-          # Idempotency: skip if a PR for this exact bump already exists.
+          # Check again deliberately: another actor may have opened a PR during validation.
           if [ -n "$(gh pr list --head "$BR" --state all --json number -q '.[0].number')" ]; then
             echo "PR for $BR already exists — skipping."
             exit 0
@@ -115,7 +158,9 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$BR"
-          git commit -am "⬆️ Bundle BossTerm ${NEW_BT} (${NEW_PLUGIN})"
+          git add build.gradle.kts
+          git commit -m "⬆️ Bundle BossTerm ${NEW_BT} (${NEW_PLUGIN})"
+          gh auth setup-git
           git push -u origin "$BR"
 
           PR_ARGS=(--base main --head "$BR")
@@ -123,6 +168,7 @@ jobs:
             PR_ARGS+=(--draft)
             printf '\nAutomatic validation did not pass (%s). Review the [workflow run](%s) and fix this bump before merging.\n' \
               "$VALIDATION_OUTCOME" "$VALIDATION_URL" >> pr-body.md
+            printf 'This bot-created PR has no pull_request CI. Push a fix with maintainer credentials to trigger checks, then mark it ready and merge. Closing it alone does not retry this version.\n' >> pr-body.md
           fi
 
           gh pr create "${PR_ARGS[@]}" \

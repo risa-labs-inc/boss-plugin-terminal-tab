@@ -5,6 +5,7 @@ import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -31,11 +32,11 @@ class BossTermAutoBumpWorkflowTest {
             val project = File(assertNotNull(System.getProperty("pluginProjectDir")))
             val lines = File(project, ".github/workflows/bossterm-autobump.yml").readLines()
             val step = lines.indexOfFirst { it.trim() == "- name: Open, merge & release" }
-            assertTrue(step >= 0)
+            assertTrue(step >= 0, "Open, merge & release step not found in workflow")
             val script = lines.drop(step).dropWhile { it.trim() != "run: |" }.drop(1)
                 .takeWhile { it.isBlank() || it.startsWith("          ") }
                 .joinToString("\n").trimIndent()
-            assertTrue(script.isNotBlank())
+            assertTrue(script.isNotBlank(), "Open, merge & release shell block not found")
             val entrypoint = File(root, "release.sh").apply { writeText(script) }
             val bin = File(root, "bin").apply { mkdirs() }
             File(bin, "gh").apply {
@@ -78,7 +79,7 @@ class BossTermAutoBumpWorkflowTest {
             assertEquals(shouldRelease, calls.any { it.startsWith("workflow run ") }, calls.toString())
             if (existing) {
                 assertEquals(1, calls.size)
-                assertTrue(!gitCalls.exists())
+                assertFalse(gitCalls.exists())
                 assertEquals("Dependency bump\n", body.readText())
             } else {
                 val create = calls.single { it.startsWith("pr create ") }

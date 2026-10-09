@@ -86,6 +86,11 @@ It runs the full Linux build and tests before automatically merging a dependency
 bump; the release workflow repeats validation before publishing. Failed validation
 leaves a draft PR for review, with a link to the workflow logs. An existing bump PR
 prevents repeated attempts for the same BossTerm version.
+Validation runs in a separate job with read-only repository permissions and no
+saved checkout credentials; a fresh job regenerates the bump to open/merge the PR.
+Failed drafts require a maintainer to push a fix or retry commit with their own
+credentials (triggering PR CI), mark it ready and merge it. Closing a draft alone
+does not retry that version, and bot-created PRs do not trigger PR CI themselves.
 
 The new `list_machines` MCP tool groups tabs already registered in this BOSS process:
 the local machine and any remote shares currently joined here. It does not fetch an
