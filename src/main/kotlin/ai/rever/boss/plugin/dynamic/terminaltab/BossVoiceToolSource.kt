@@ -288,11 +288,11 @@ internal class BossVoiceToolSource(
          *
          *     MAX_EXTERNAL_TOOLS = MAX_ADVERTISED_TOOLS - bossTermOwnToolNames.size
          *
-         * 128 − 14 = 114 today. The reason to derive it rather than hardcode 114 is
+         * 128 − 15 = 113 today. The reason to derive it rather than hardcode 113 is
          * the measurement above: the surface went from 107 tools to 127 in a single
          * afternoon because someone installed a Kubernetes plugin. A constant that
          * happens to be right about BossTerm's half is a constant that goes wrong
-         * the first time BossTerm ships a fourteenth built-in — and the failure mode
+         * whenever BossTerm adds another built-in — and the failure mode
          * is not a degraded call, it is `session.update` rejected, every tool gone
          * and the call dead. Deriving it costs one subtraction.
          *
@@ -303,11 +303,11 @@ internal class BossVoiceToolSource(
          *    `allowWriteTools` advertises them, so with them off the real total is
          *    below 128 rather than above it. Wrong in the safe direction.
          *  - **[FAMILY_PRIORITY] is load-bearing today.** 119 tools are advertisable
-         *    against 114 slots, so five are dropped on every enumeration — the tail
+         *    against 113 slots, so six are dropped on every enumeration — the tail
          *    of the RBAC family, by design, each one logged by name.
          *
          * Nothing here bounds the token cost, which is the other thing a ceiling
-         * used to be for: at 114 the external array is roughly 35 KB (~8.8k tokens)
+         * used to be for: at 113 the external array is roughly 35 KB (~8.8k tokens)
          * per turn. That is the honest price of the capability and the user's call to
          * make, not this file's — but it is no longer what sets the number.
          */
@@ -328,7 +328,7 @@ internal class BossVoiceToolSource(
          * Families in the order the ceiling should keep them, most useful first.
          *
          * Load-bearing as of the Kubernetes plugin landing — 119 tools are
-         * advertisable against 114 slots — and it is the difference between
+         * advertisable against 113 slots — and it is the difference between
          * dropping the tools nobody asks a voice agent for and dropping whichever
          * tools happened to register last. An entry ending in `_` is a prefix;
          * anything else is an exact name. Unlisted families sort last (and every

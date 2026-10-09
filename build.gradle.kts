@@ -270,18 +270,14 @@ val pinnedLocalApiJar = provider {
 // command palette, workflows, history search, session restore; compose-ui
 // compiles with -Xjvm-default=all (no $DefaultImpls bridges). 1.1.101 added
 // the `bossterm.settings.dir` relocation hook this plugin relies on.
-// On a bump, re-check that onLastTabClosed still fires only from
-// TabController.closeTab/extractTab (never disposeAll): TerminalTabComponent
-// closes the host tab from it. Also re-check that SettingsManager still saves
-// synchronously to settings.json under bossterm.settings.dir:
+// Embedder contracts: onLastTabClosed fires only from TabController.closeTab/extractTab
+// (never disposeAll), because TerminalTabComponent closes the host tab from it.
+// SettingsManager saves synchronously to settings.json under bossterm.settings.dir:
 // applyCollapsedTabStripDefault reads it back right after updateSetting.
 // Includes host account isolation, relay tickets and account viewing preferences.
-// FontUtils/ImageRenderer checked against the hosted-controls source; verify again against release 1.2.173.
-val bosstermVersion = "1.2.173"
-// This source override must be reviewed (or removed) whenever BossTerm changes.
-check(bosstermVersion == "1.2.173") {
-    "Review the ImageRenderer and FontUtils overrides before upgrading BossTerm"
-}
+// Upstream owns the host-compatible FontUtils/ImageRenderer implementations.
+// CurrentHostFontUtilsTest/CurrentHostImageRendererTest exercise the bundled classes.
+val bosstermVersion = "1.2.181"
 
 repositories {
     if (providers.gradleProperty("useLocalBossTerm").orNull == "true") {
@@ -378,8 +374,8 @@ tasks.withType<Test>().configureEach {
     // failure on a runner nobody can reproduce locally (the Windows job) is diagnosable.
     testLogging { exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL }
     useJUnitPlatform()
-    inputs.files(".github/workflows/build.yml", ".github/workflows/test.yml")
-        .withPropertyName("apiPinWorkflows")
+    inputs.files(".github/workflows/build.yml", ".github/workflows/test.yml", ".github/workflows/bossterm-autobump.yml")
+        .withPropertyName("pluginWorkflows")
         .withPathSensitivity(PathSensitivity.RELATIVE)
     dependsOn("buildPluginJar")
     systemProperty("pluginJar", layout.buildDirectory.file("libs/boss-plugin-terminal-tab-${version}.jar").get().asFile.absolutePath)
@@ -471,16 +467,7 @@ tasks.register<Jar>("buildPluginJar") {
                 // catches the transitive zxing:javase if it ever appears).
                 // zxing is not host-shared, so it must be bundled child-first.
                 jar.path.replace('\\', '/').contains("/com.google.zxing/")
-        }.map { dependency ->
-            zipTree(dependency).matching {
-                // The plugin compiles the same public API with host-owned rendering.
-                // Exclude upstream explicitly instead of relying on duplicate entry ordering.
-                exclude("ai/rever/bossterm/compose/util/FontUtilsKt.class")
-                exclude("ai/rever/bossterm/compose/util/FontUtilsKt$*.class")
-                exclude("ai/rever/bossterm/compose/rendering/ImageRenderer.class")
-                exclude("ai/rever/bossterm/compose/rendering/ImageRenderer$*.class")
-            }
-        }
+        }.map { zipTree(it) }
     })
 
     doLast {

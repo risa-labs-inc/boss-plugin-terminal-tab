@@ -28,16 +28,25 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write        # push the bump branch + merge to main
-  pull-requests: write   # open and merge the PR
-  actions: write         # dispatch build.yml (the release) via gh workflow run
+  contents: read
 
 jobs:
-  autobump:
+  prepare:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      changed: ${{ steps.bump.outputs.changed }}
+      new_bt: ${{ steps.bump.outputs.new_bt }}
+      new_plugin: ${{ steps.bump.outputs.new_plugin }}
+      existing: ${{ steps.existing.outputs.found }}
+      base_sha: ${{ github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Resolve & prepare bump
         id: bump
@@ -45,18 +54,127 @@ jobs:
           TARGET_VERSION: ${{ inputs.target_version }}
         run: bash .github/scripts/bump-bossterm.sh
 
-      - name: Open, merge & release
+      - name: Check for an existing bump PR
+        id: existing
         if: steps.bump.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           NEW_BT: ${{ steps.bump.outputs.new_bt }}
-          NEW_PLUGIN: ${{ steps.bump.outputs.new_plugin }}
+        run: |
+          set -euo pipefail
+          EXISTING=$(gh pr list --head "bump/bossterm-${NEW_BT}" --state all --json number -q '.[0].number')
+          if [ -n "$EXISTING" ]; then
+            echo "PR #$EXISTING already exists; skipping validation and release."
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Dependencies execute only here, without a repository write token or saved
+  # checkout credentials. No files or executable outputs flow into the write job.
+  validate:
+    needs: prepare
+    if: needs.prepare.outputs.changed == 'true' && needs.prepare.outputs.existing == 'false'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.base_sha }}
+          persist-credentials: false
+
+      - name: Recreate pinned bump
+        env:
+          TARGET_VERSION: ${{ needs.prepare.outputs.new_bt }}
+          EXPECTED_PLUGIN: ${{ needs.prepare.outputs.new_plugin }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/bump-bossterm.sh
+          grep -Fxq "val bosstermVersion = \"${TARGET_VERSION}\"" build.gradle.kts
+          grep -Fxq "version = \"${EXPECTED_PLUGIN}\"" build.gradle.kts
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+
+      - name: Download declared boss-plugin-api
+        run: |
+          set -euo pipefail
+          API_VERSION=$(sed -n 's/^val bossPluginApiVersion = "\([^"]*\)"/\1/p' build.gradle.kts)
+          test -n "$API_VERSION"
+          mkdir -p build/downloaded-deps
+          curl -fsSL -o build/downloaded-deps/boss-plugin-api.jar \
+            "https://github.com/risa-labs-inc/boss-plugin-api/releases/download/v${API_VERSION}/boss-plugin-api-${API_VERSION}.jar"
+
+      - name: Install test dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq fish zsh xvfb xauth
+
+      - name: Validate BossTerm upgrade before merge
+        if: runner.os == 'Linux'
+        run: xvfb-run -a ./gradlew build --no-daemon
+        env:
+          CI: 'true'
+
+      - name: Verify Windows scripts before merge
+        if: runner.os == 'Windows'
+        run: ./gradlew test --tests '*HostAccountSessionBridgeTest' --tests '*OnboardingInstallScriptTest' --tests '*PluginManifestTest' --tests '*SidebarEnvInjectionTest' buildPluginJar --no-daemon
+        env:
+          CI: 'true'
+
+  publish:
+    needs: [prepare, validate]
+    # PRs created with GITHUB_TOKEN do not trigger pull_request CI. Failed
+    # validation must still reach this fresh job, but can only open a draft PR.
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.changed == 'true' && needs.prepare.outputs.existing == 'false' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.base_sha }}
+          persist-credentials: false
+
+      # Regenerate from trusted source; never consume files from validation.
+      - name: Recreate pinned bump
+        env:
+          TARGET_VERSION: ${{ needs.prepare.outputs.new_bt }}
+          EXPECTED_PLUGIN: ${{ needs.prepare.outputs.new_plugin }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/bump-bossterm.sh
+          grep -Fxq "val bosstermVersion = \"${TARGET_VERSION}\"" build.gradle.kts
+          grep -Fxq "version = \"${EXPECTED_PLUGIN}\"" build.gradle.kts
+
+      - name: Open, merge & release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_BT: ${{ needs.prepare.outputs.new_bt }}
+          NEW_PLUGIN: ${{ needs.prepare.outputs.new_plugin }}
           DRY_RUN: ${{ inputs.dry_run }}
+          VALIDATION_OUTCOME: ${{ needs.validate.result }}
+          VALIDATION_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           BR="bump/bossterm-${NEW_BT}"
 
-          # Idempotency: skip if a PR for this exact bump already exists.
+          # Check again deliberately: another actor may have opened a PR during validation.
           if [ -n "$(gh pr list --head "$BR" --state all --json number -q '.[0].number')" ]; then
             echo "PR for $BR already exists — skipping."
             exit 0
@@ -65,15 +183,25 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$BR"
-          git commit -am "⬆️ Bundle BossTerm ${NEW_BT} (${NEW_PLUGIN})"
+          git add build.gradle.kts
+          git commit -m "⬆️ Bundle BossTerm ${NEW_BT} (${NEW_PLUGIN})"
+          gh auth setup-git
           git push -u origin "$BR"
 
-          gh pr create --base main --head "$BR" \
+          PR_ARGS=(--base main --head "$BR")
+          if [ "$VALIDATION_OUTCOME" != 'success' ]; then
+            PR_ARGS+=(--draft)
+            printf '\nAutomatic validation did not pass (%s). Review the [workflow run](%s) and fix this bump before merging.\n' \
+              "$VALIDATION_OUTCOME" "$VALIDATION_URL" >> pr-body.md
+            printf 'This bot-created PR has no pull_request CI. Push a fix with maintainer credentials to trigger checks, then mark it ready and merge. Closing it alone does not retry this version.\n' >> pr-body.md
+          fi
+
+          gh pr create "${PR_ARGS[@]}" \
             --title "⬆️ Bundle BossTerm ${NEW_BT} (${NEW_PLUGIN})" \
             --body-file pr-body.md
 
-          if [ "${DRY_RUN:-false}" = "true" ]; then
-            echo "dry_run=true — PR opened, leaving it unmerged."
+          if [ "$VALIDATION_OUTCOME" != 'success' ] || [ "${DRY_RUN:-false}" = "true" ]; then
+            echo "Review required or dry_run=true — PR opened, leaving it unmerged."
             exit 0
           fi
 

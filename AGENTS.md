@@ -223,8 +223,9 @@ clients retain the existing reattach behavior.
 
 For local dependency validation, use `-PuseLocalBossTerm=true` and
 `-PbossPluginApiPath=/absolute/path/to/boss-plugin-api`. Maven-local artifacts may
-shadow releases: validate the published BossTerm 1.2.173 artifact and source overrides
-before release. Do not publish a local development artifact to remote repositories.
+shadow releases: validate the published BossTerm artifact before release. Rendering
+compatibility tests must exercise the upstream classes in the installable plugin JAR.
+Do not publish a local development artifact to remote repositories.
 
 ## Host liquid-glass surfaces
 

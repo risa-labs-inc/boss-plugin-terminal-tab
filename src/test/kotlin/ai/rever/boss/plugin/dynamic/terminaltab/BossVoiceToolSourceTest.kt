@@ -298,9 +298,9 @@ class BossVoiceToolSourceTest {
             it.startsWith("role_") || it.startsWith("permission") || it.startsWith("user") ||
                 it == "roles_list" || it == "users_list"
         }
-        // 7 of the 12 RBAC tools, because the ceiling has already taken the last 5
+        // 6 of the 12 RBAC tools, because the ceiling has already taken the last 6
         // — which is the priority table doing its job, asserted in its own test.
-        assertEquals(7, rbac.size)
+        assertEquals(6, rbac.size)
         assertEquals(advertisable.takeLast(rbac.size), rbac)
     }
 
@@ -333,7 +333,7 @@ class BossVoiceToolSourceTest {
         // failure would be a rejected session, so it is asserted against the names
         // a live `manage_tools list` reports plus the always-on meta-tool.
         assertEquals(BOSSTERM_OWN_TOOL_NAMES_EXPECTED, bossTermOwnToolNames)
-        assertEquals(14, bossTermOwnToolNames.size)
+        assertEquals(15, bossTermOwnToolNames.size)
         assertTrue(
             "close_panel" in bossTermOwnToolNames,
             "close_panel is one of BossTerm's write tools; the hand-written list this replaced " +
@@ -364,7 +364,7 @@ class BossVoiceToolSourceTest {
         )
         // Today's arithmetic, stated so a change to either side is visible.
         assertEquals(128, BossVoiceToolSource.MAX_ADVERTISED_TOOLS)
-        assertEquals(114, BossVoiceToolSource.MAX_EXTERNAL_TOOLS)
+        assertEquals(113, BossVoiceToolSource.MAX_EXTERNAL_TOOLS)
     }
 
     @Test
@@ -431,7 +431,7 @@ class BossVoiceToolSourceTest {
         assertEquals(119, all.size, "advertisable tools on the measured surface")
         assertEquals(BossVoiceToolSource.MAX_EXTERNAL_TOOLS, advertisable.size)
         assertEquals(
-            listOf("roles_list", "user_role_assign", "user_role_remove", "user_search", "users_list"),
+            listOf("role_revoke_permission", "roles_list", "user_role_assign", "user_role_remove", "user_search", "users_list"),
             (all - advertisable.toSet()).sorted(),
         )
     }

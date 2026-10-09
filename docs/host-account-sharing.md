@@ -66,10 +66,11 @@ Old backends or temporary failures retain safe defaults or that account's own ca
    migration makes stale settings saves return 409 instead of a retryable server error.
    These new prerequisites are separate from the earlier account-sharing migration;
    building this plugin does not deploy them.
-4. BossTerm **1.2.170** contains the host-account, relay and preference APIs. CI and
-   release builds use this published Maven artifact. FontUtils/ImageRenderer overrides
-   were compared with its source JAR and differ only in attribution comments. No new host
-   plugin API or BossConsole binary is required; the library is bundled inside the plugin.
+4. BossTerm **1.2.170** introduced the host-account, relay and preference APIs. CI and
+   release builds validate the published Maven version pinned in `build.gradle.kts`.
+   Font and image compatibility fixes are now upstream; plugin source overrides are
+   no longer needed. The library remains bundled privately inside the plugin, subject
+   to the manifest's current host/API compatibility gates.
 
 Relay remains disabled by default. For staged debug testing, explicitly set
 `BOSSTERM_RELAY_ENABLED=true` and `BOSSTERM_RELAY_URL=wss://<trusted-relay-origin>`

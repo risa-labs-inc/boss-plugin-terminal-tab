@@ -13,8 +13,8 @@ A dynamic plugin that provides terminal tabs in the main panel area of BOSS Cons
 
 ## Requirements
 
-- A BOSS Console host shipping Plugin API 1.0.89 or later
-  (`minBossVersion` requires BOSS Console 9.5.20 or later).
+- A BOSS Console host shipping Plugin API 1.0.97 or later
+  (`minBossVersion` requires BOSS Console 9.5.34 or later).
 
 ## Installation
 
@@ -28,14 +28,14 @@ Or install via Plugin Store in BOSS Console.
 ## Building
 
 ```bash
-./gradlew jar
+./gradlew buildPluginJar
 ```
 
 The plugin JAR will be created in `build/libs/`.
 
 ## API compatibility gate
 
-The manifest requires Plugin API 1.0.89. Release CI, test CI, and the local
+The manifest requires Plugin API 1.0.97. Release CI, test CI, and the local
 compile/test classpaths pin that same version; `PluginManifestTest` checks the
 processed manifest against all three pins. Update them together when adopting
 new host API symbols: change `bossPluginApiVersion` in `build.gradle.kts`,
@@ -45,7 +45,8 @@ minimum supported API, so using a newer symbol requires an explicit gate update.
 
 This gate protects hosts that report their installed API version. Hosts with an
 unknown API version fail open in both the updater and loader, so the manifest
-alone does not protect those hosts. `minBossVersion` remains 9.5.20 so affected 9.5.25 hosts can receive the image hotfix.
+alone does not protect those hosts. `minBossVersion` is 9.5.34 because terminal-link
+destination selection requires that host implementation.
 
 Publishing a manifest does not repair existing store records. Verify the API
 gate on previously published versions, including any version used as a fallback.
@@ -55,8 +56,8 @@ Store data must be verified separately from this repository's build.
 
 The host owns Compose, Skia and Skiko. `buildPluginJar` rejects bundled
 Compose/Skia/Skiko classes and Skiko native libraries to prevent duplicate runtime
-ownership. The image-decoding compatibility path below works before the general
-host sharing fix, so this plugin release can ship independently of BossConsole 9.5.26.
+ownership. BossTerm's font and image code uses shared Compose APIs, so the plugin
+does not need local rendering overrides.
 
 ## License
 
@@ -64,49 +65,39 @@ Licensed under the [Apache License, Version 2.0](LICENSE).
 
 Copyright 2025-2026 Risa Labs Inc.
 
-## BOSS 9.5.25 rendering compatibility
+## BossTerm rendering and dependency updates
 
-This release keeps the existing minimum host version and carries temporary source
-overrides of BossTerm 1.2.167's `ImageRenderer` and `FontUtils`. The image renderer decodes images using
-`androidx.compose.ui.res.loadImageBitmap`, so decoding happens inside the host's
-already-shared Compose runtime. The host owns Skia and the returned ImageBitmap;
-the plugin does not bundle Skia/Skiko or change the host's classloader policy.
+The bundled BossTerm includes the font-selection and inline-image compatibility
+fixes that previously required plugin copies of `FontUtils` and `ImageRenderer`.
+Those copies and their packaging exclusions have been removed. Fonts are discovered
+with AWT and resolved through Compose's `SystemFont`; inline images decode through
+`androidx.compose.ui.res.loadImageBitmap`. The host owns the rendering runtime.
 
-The override preserves BossTerm's renderer API, cache and placement behavior. Its
-upstream class is explicitly excluded from the fat JAR. The build requires reviewing
-or removing this override when upgrading BossTerm; remove it once the upstream
-renderer uses the shared Compose API. The public Compose API is deprecated but remains
-available on the affected host, unlike the recommended resources package which is not
-part of that host's shared surface.
+`CurrentHostFontUtilsTest` and `CurrentHostImageRendererTest` load the upstream
+classes from the installable plugin JAR with direct Skia/Skiko access blocked.
+They verify font selection and fallback, image decoding, caching and invalid-image
+handling. The packaging check continues to reject a second rendering runtime.
+Upstream also routes MCP WebP conversion and macOS SF Symbol decoding through
+shared Compose. Standalone window rendering remains outside the plugin's lifecycle.
 
-`CurrentHostImageRendererTest` loads the renderer from the shipped plugin JAR with
-direct Skia/Skiko resolution blocked, decodes a PNG through host Compose, and checks
-cache behavior and invalid-image handling. This fixes the reported inline-image crash;
-the host shared-rendering fix is still needed for other direct Skia/Skiko consumers.
+The source-override version guard is no longer needed, so the automatic dependency
+updater can resume tracking BossTerm releases on Maven Central.
+It runs the full Linux build and the Windows script checks from PR CI before
+automatically merging a dependency bump; the release workflow repeats the Linux
+build before publishing. Failed validation on either platform
+leaves a draft PR for review, with a link to the workflow logs. An existing bump PR
+prevents repeated attempts for the same BossTerm version.
+Validation runs in a separate job with read-only repository permissions and no
+saved checkout credentials; a fresh job regenerates the bump to open/merge the PR.
+Failed drafts require a maintainer to push a fix or retry commit with their own
+credentials (triggering PR CI), mark it ready and merge it. Closing a draft alone
+does not retry that version, and bot-created PRs do not trigger PR CI themselves.
 
-`FontUtils` discovers and categorizes system fonts using AWT and passes their names
-into Compose's `SystemFont`; Compose owns the corresponding rendering typefaces.
-Bundled font extraction, the default font, missing-font fallback, and optional emoji
-and math families retain their existing behavior. Java logical font names are excluded because
-Skia cannot resolve them as physical families. A saved logical name falls back to
-the bundled font. Newly installed fonts appear after restarting BOSS.
-`CurrentHostFontUtilsTest` loads the shipped override with direct Skia/Skiko access
-blocked, enumerates settings fonts and resolves selected, bundled, fallback, and
-available emoji/math families through host Compose.
+The new `list_machines` MCP tool groups tabs already registered in this BOSS process:
+the local machine and any remote shares currently joined here. It does not fetch an
+account's machine directory or read standalone BossTerm credentials. Account sharing
+continues to use the host identity installed by `HostAccountSessionBridge`.
 
-Remaining direct references in bundled BossTerm 1.2.167:
-
-- MCP `show_image` WebP-to-PNG conversion still requires the upstream BossTerm fix
-  or the host shared-rendering fix; standard ImageIO-readable images already work.
-- macOS SF Symbol decoding in shared tab/status icons falls back to Material icons
-  on this host; the upstream library fix restores the native symbols.
-- Native title toolbar SVG rendering belongs to standalone BossTerm windows.
-  Windows auxiliary glass can encounter blocked Skiko access; BossTerm already
-  catches linkage failures and uses opaque surfaces. Neither platform path is
-  overridden here; the host shared-rendering fix restores them.
-
-The automatic dependency updater pauses while the source-override version guard
-is present, preventing it from auto-merging an incompatible bump.
-
-Remove both pinned source overrides when the corrected BossTerm library is released
-and the dependency is upgraded. Do not bundle a second Skia/Skiko runtime.
+BossTerm's shared session engine is included in this bundle. BOSS terminal tabs
+still use the embedded session lifecycle; upgrading the library does not attach
+them to the standalone BossTerm daemon or keep them alive after BOSS exits.
