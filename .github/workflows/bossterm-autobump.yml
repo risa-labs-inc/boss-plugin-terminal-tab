@@ -87,7 +87,12 @@ jobs:
       - name: Recreate pinned bump
         env:
           TARGET_VERSION: ${{ needs.prepare.outputs.new_bt }}
-        run: bash .github/scripts/bump-bossterm.sh
+          EXPECTED_PLUGIN: ${{ needs.prepare.outputs.new_plugin }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/bump-bossterm.sh
+          grep -Fxq "val bosstermVersion = \"${TARGET_VERSION}\"" build.gradle.kts
+          grep -Fxq "version = \"${EXPECTED_PLUGIN}\"" build.gradle.kts
 
       - uses: actions/setup-java@v4
         with:
@@ -135,7 +140,12 @@ jobs:
       - name: Recreate pinned bump
         env:
           TARGET_VERSION: ${{ needs.prepare.outputs.new_bt }}
-        run: bash .github/scripts/bump-bossterm.sh
+          EXPECTED_PLUGIN: ${{ needs.prepare.outputs.new_plugin }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/bump-bossterm.sh
+          grep -Fxq "val bosstermVersion = \"${TARGET_VERSION}\"" build.gradle.kts
+          grep -Fxq "version = \"${EXPECTED_PLUGIN}\"" build.gradle.kts
 
       - name: Open, merge & release
         env:
