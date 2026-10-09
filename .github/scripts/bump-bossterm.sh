@@ -32,10 +32,11 @@ current_plugin=$(sed -n 's/^version = "\(.*\)"/\1/p' "$GRADLE_FILE")
 [ -n "$current_plugin" ] || { echo "ERROR: could not read plugin version from $GRADLE_FILE" >&2; exit 1; }
 echo "Current: bossterm=$current_bt plugin=$current_plugin"
 
-# Source overrides intentionally pin the library ABI. This workflow auto-merges
-# without Gradle, so honor the build's review gate BEFORE touching main or fetching
-# a newer release. Remove the overrides and their Gradle check in a reviewed bump.
+# Source overrides intentionally pin the library ABI. Honor the build's review
+# gate before fetching a newer release; even a passing build cannot replace that
+# review. Remove the overrides and their Gradle check in a reviewed bump.
 # Intentionally dormant while no overrides exist; retain for any future pinned override.
+# Future guards must use the check(bosstermVersion == ...) form matched below.
 if grep -Eq '^[[:space:]]*check\(bosstermVersion[[:space:]]*==' "$GRADLE_FILE"; then
   noop "BossTerm source overrides require a reviewed dependency bump; automatic updates paused"
 fi

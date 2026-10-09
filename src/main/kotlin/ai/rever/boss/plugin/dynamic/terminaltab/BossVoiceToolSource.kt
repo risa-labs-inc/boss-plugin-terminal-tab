@@ -307,7 +307,7 @@ internal class BossVoiceToolSource(
          *    of the RBAC family, by design, each one logged by name.
          *
          * Nothing here bounds the token cost, which is the other thing a ceiling
-         * used to be for: at 114 the external array is roughly 35 KB (~8.8k tokens)
+         * used to be for: at 113 the external array is roughly 35 KB (~8.8k tokens)
          * per turn. That is the honest price of the capability and the user's call to
          * make, not this file's — but it is no longer what sets the number.
          */

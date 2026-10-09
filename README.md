@@ -82,6 +82,8 @@ shared Compose. Standalone window rendering remains outside the plugin's lifecyc
 
 The source-override version guard is no longer needed, so the automatic dependency
 updater can resume tracking BossTerm releases on Maven Central.
+It runs the full build and tests before automatically merging a dependency bump;
+the release workflow repeats validation before publishing.
 
 The new `list_machines` MCP tool groups tabs already registered in this BOSS process:
 the local machine and any remote shares currently joined here. It does not fetch an

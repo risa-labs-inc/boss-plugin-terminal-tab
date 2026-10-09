@@ -45,6 +45,37 @@ jobs:
           TARGET_VERSION: ${{ inputs.target_version }}
         run: bash .github/scripts/bump-bossterm.sh
 
+      # PRs opened with GITHUB_TOKEN do not trigger pull_request CI. Validate
+      # before merging here, rather than relying on the post-merge release build.
+      - uses: actions/setup-java@v4
+        if: steps.bump.outputs.changed == 'true'
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.bump.outputs.changed == 'true'
+
+      - name: Download declared boss-plugin-api
+        if: steps.bump.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          API_VERSION=$(sed -n 's/^val bossPluginApiVersion = "\([^"]*\)"/\1/p' build.gradle.kts)
+          test -n "$API_VERSION"
+          mkdir -p build/downloaded-deps
+          curl -fsSL -o build/downloaded-deps/boss-plugin-api.jar \
+            "https://github.com/risa-labs-inc/boss-plugin-api/releases/download/v${API_VERSION}/boss-plugin-api-${API_VERSION}.jar"
+
+      - name: Install test dependencies
+        if: steps.bump.outputs.changed == 'true'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq fish zsh xvfb xauth
+
+      - name: Validate BossTerm upgrade before merge
+        if: steps.bump.outputs.changed == 'true'
+        run: xvfb-run -a ./gradlew build --no-daemon
+        env:
+          CI: 'true'
+
       - name: Open, merge & release
         if: steps.bump.outputs.changed == 'true'
         env:
