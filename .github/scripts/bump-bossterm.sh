@@ -35,6 +35,7 @@ echo "Current: bossterm=$current_bt plugin=$current_plugin"
 # Source overrides intentionally pin the library ABI. This workflow auto-merges
 # without Gradle, so honor the build's review gate BEFORE touching main or fetching
 # a newer release. Remove the overrides and their Gradle check in a reviewed bump.
+# Intentionally dormant while no overrides exist; retain for any future pinned override.
 if grep -Eq '^[[:space:]]*check\(bosstermVersion[[:space:]]*==' "$GRADLE_FILE"; then
   noop "BossTerm source overrides require a reviewed dependency bump; automatic updates paused"
 fi

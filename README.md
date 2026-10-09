@@ -77,9 +77,16 @@ with AWT and resolved through Compose's `SystemFont`; inline images decode throu
 classes from the installable plugin JAR with direct Skia/Skiko access blocked.
 They verify font selection and fallback, image decoding, caching and invalid-image
 handling. The packaging check continues to reject a second rendering runtime.
+Upstream also routes MCP WebP conversion and macOS SF Symbol decoding through
+shared Compose. Standalone window rendering remains outside the plugin's lifecycle.
 
 The source-override version guard is no longer needed, so the automatic dependency
 updater can resume tracking BossTerm releases on Maven Central.
+
+The new `list_machines` MCP tool groups tabs already registered in this BOSS process:
+the local machine and any remote shares currently joined here. It does not fetch an
+account's machine directory or read standalone BossTerm credentials. Account sharing
+continues to use the host identity installed by `HostAccountSessionBridge`.
 
 BossTerm's shared session engine is included in this bundle. BOSS terminal tabs
 still use the embedded session lifecycle; upgrading the library does not attach
