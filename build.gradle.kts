@@ -278,7 +278,7 @@ val pinnedLocalApiJar = provider {
 // Includes host account isolation, relay tickets and account viewing preferences.
 // Upstream owns the host-compatible FontUtils/ImageRenderer implementations.
 // CurrentHostFontUtilsTest/CurrentHostImageRendererTest exercise the bundled classes.
-val bosstermVersion = "1.2.180"
+val bosstermVersion = "1.2.181"
 
 repositories {
     if (providers.gradleProperty("useLocalBossTerm").orNull == "true") {

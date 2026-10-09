@@ -45,19 +45,35 @@ jobs:
           TARGET_VERSION: ${{ inputs.target_version }}
         run: bash .github/scripts/bump-bossterm.sh
 
+      - name: Check for an existing bump PR
+        id: existing
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_BT: ${{ steps.bump.outputs.new_bt }}
+        run: |
+          set -euo pipefail
+          EXISTING=$(gh pr list --head "bump/bossterm-${NEW_BT}" --state all --json number -q '.[0].number')
+          if [ -n "$EXISTING" ]; then
+            echo "PR #$EXISTING already exists; skipping validation and release."
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # PRs opened with GITHUB_TOKEN do not trigger pull_request CI. Validate
       # before merging here, rather than relying on the post-merge release build.
       - uses: actions/setup-java@v4
-        if: steps.bump.outputs.changed == 'true'
+        if: steps.bump.outputs.changed == 'true' && steps.existing.outputs.found == 'false'
         with:
           distribution: temurin
           java-version: '17'
 
       - uses: gradle/actions/setup-gradle@v4
-        if: steps.bump.outputs.changed == 'true'
+        if: steps.bump.outputs.changed == 'true' && steps.existing.outputs.found == 'false'
 
       - name: Download declared boss-plugin-api
-        if: steps.bump.outputs.changed == 'true'
+        if: steps.bump.outputs.changed == 'true' && steps.existing.outputs.found == 'false'
         run: |
           set -euo pipefail
           API_VERSION=$(sed -n 's/^val bossPluginApiVersion = "\([^"]*\)"/\1/p' build.gradle.kts)
@@ -67,22 +83,25 @@ jobs:
             "https://github.com/risa-labs-inc/boss-plugin-api/releases/download/v${API_VERSION}/boss-plugin-api-${API_VERSION}.jar"
 
       - name: Install test dependencies
-        if: steps.bump.outputs.changed == 'true'
+        if: steps.bump.outputs.changed == 'true' && steps.existing.outputs.found == 'false'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq fish zsh xvfb xauth
 
       - name: Validate BossTerm upgrade before merge
-        if: steps.bump.outputs.changed == 'true'
+        id: validate
+        if: steps.bump.outputs.changed == 'true' && steps.existing.outputs.found == 'false'
         run: xvfb-run -a ./gradlew build --no-daemon
         env:
           CI: 'true'
 
       - name: Open, merge & release
-        if: steps.bump.outputs.changed == 'true'
+        if: ${{ !cancelled() && steps.bump.outputs.changed == 'true' && steps.existing.outputs.found == 'false' }}
         env:
           GH_TOKEN: ${{ github.token }}
           NEW_BT: ${{ steps.bump.outputs.new_bt }}
           NEW_PLUGIN: ${{ steps.bump.outputs.new_plugin }}
           DRY_RUN: ${{ inputs.dry_run }}
+          VALIDATION_OUTCOME: ${{ steps.validate.outcome }}
+          VALIDATION_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           BR="bump/bossterm-${NEW_BT}"
@@ -99,12 +118,19 @@ jobs:
           git commit -am "⬆️ Bundle BossTerm ${NEW_BT} (${NEW_PLUGIN})"
           git push -u origin "$BR"
 
-          gh pr create --base main --head "$BR" \
+          PR_ARGS=(--base main --head "$BR")
+          if [ "$VALIDATION_OUTCOME" != 'success' ]; then
+            PR_ARGS+=(--draft)
+            printf '\nAutomatic validation did not pass (%s). Review the [workflow run](%s) and fix this bump before merging.\n' \
+              "$VALIDATION_OUTCOME" "$VALIDATION_URL" >> pr-body.md
+          fi
+
+          gh pr create "${PR_ARGS[@]}" \
             --title "⬆️ Bundle BossTerm ${NEW_BT} (${NEW_PLUGIN})" \
             --body-file pr-body.md
 
-          if [ "${DRY_RUN:-false}" = "true" ]; then
-            echo "dry_run=true — PR opened, leaving it unmerged."
+          if [ "$VALIDATION_OUTCOME" != 'success' ] || [ "${DRY_RUN:-false}" = "true" ]; then
+            echo "Review required or dry_run=true — PR opened, leaving it unmerged."
             exit 0
           fi
 
