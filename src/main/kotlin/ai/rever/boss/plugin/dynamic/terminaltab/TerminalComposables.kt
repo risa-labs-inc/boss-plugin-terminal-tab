@@ -9,7 +9,6 @@ import ai.rever.bossterm.compose.TabbedTerminal
 import ai.rever.bossterm.compose.mcp.LocalBossTermMcpConfig
 import ai.rever.bossterm.compose.hyperlinks.HyperlinkInfo
 import ai.rever.bossterm.compose.hyperlinks.HyperlinkType
-import ai.rever.bossterm.compose.rememberEmbeddableTerminalState
 import ai.rever.bossterm.compose.settings.SettingsManager
 import ai.rever.bossterm.compose.settings.TerminalSettingsOverride
 import ai.rever.bossterm.compose.share.SessionShareManager
@@ -63,10 +62,14 @@ internal fun TabbedTerminalContentImpl(
     val settings by SettingsManager.instance.settings.collectAsState()
     val scope = rememberCoroutineScope()
     val windowId = LocalWindowIdProvider.current?.getWindowId() ?: return
+    val lifetime by TerminalStateLifetime.state.collectAsState()
+    if (!TerminalStateLifetime.canRender(windowId, lifetime)) return
 
     val resetGeneration by TabbedTerminalStateRegistry.resetGeneration.collectAsState()
     val isNew = !TabbedTerminalStateRegistry.contains(windowId, SIDEBAR_TERMINAL_ID)
-    val state = remember(resetGeneration) { TabbedTerminalStateRegistry.getOrCreate(windowId, SIDEBAR_TERMINAL_ID) }
+    val state = remember(windowId, resetGeneration, lifetime.generation) {
+        TabbedTerminalStateRegistry.getOrCreate(windowId, SIDEBAR_TERMINAL_ID)
+    } ?: return
     val pendingCommand = remember { if (isNew) consumePendingSidebarCommand(windowId) else null }
     val sidebarSettings = remember { TerminalSettingsOverride(alwaysShowTabBar = true) }
     val effectiveWorkingDir = pendingCommand?.workingDirectory ?: workingDirectory
@@ -187,6 +190,8 @@ internal fun PersistentTabbedTerminalContentImpl(
     val settings by SettingsManager.instance.settings.collectAsState()
     val scope = rememberCoroutineScope()
     val windowId = LocalWindowIdProvider.current?.getWindowId() ?: return
+    val lifetime by TerminalStateLifetime.state.collectAsState()
+    if (!TerminalStateLifetime.canRender(windowId, lifetime)) return
     // Active-panel signal from the host (BossMainWindowPanel). When the
     // user clicks to a different panel and back, this flips false→true,
     // which causes BossTerm's internal LaunchedEffect(tab.id, isActiveTab)
@@ -198,7 +203,9 @@ internal fun PersistentTabbedTerminalContentImpl(
     val isPanelActive = LocalIsPanelActive.current
 
     val isNew = !TabbedTerminalStateRegistry.contains(windowId, terminalId)
-    val state = remember(terminalId, resetGeneration) { TabbedTerminalStateRegistry.getOrCreate(windowId, terminalId) }
+    val state = remember(windowId, terminalId, resetGeneration, lifetime.generation) {
+        TabbedTerminalStateRegistry.getOrCreate(windowId, terminalId)
+    } ?: return
     val effectiveWorkingDir = if (isNew) workingDirectory else null
 
     LaunchedEffect(settings.onboardingCompleted) {
@@ -323,21 +330,24 @@ internal fun TerminalContentImpl(
     val settings by SettingsManager.instance.settings.collectAsState()
     val scope = rememberCoroutineScope()
     val windowId = LocalWindowIdProvider.current?.getWindowId() ?: return
+    val lifetime by TerminalStateLifetime.state.collectAsState()
+    if (!TerminalStateLifetime.canRender(windowId, lifetime)) return
 
-    val terminalState = if (terminalId != null) {
-        val isNew = !TerminalStateRegistry.contains(windowId, terminalId)
-        val state = remember(terminalId, resetGeneration) { TerminalStateRegistry.getOrCreate(windowId, terminalId) }
-
-        DisposableEffect(terminalId) {
-            onDispose { }
-        }
-
-        isNew to state
-    } else {
-        true to rememberEmbeddableTerminalState()
+    // Anonymous terminals still belong to this composition, but also need to be visible to
+    // plugin unload when host UI disposal times out. A fresh key on reset prevents an old
+    // onDispose from removing the replacement state.
+    val registryId = terminalId ?: remember(windowId, resetGeneration, lifetime.generation) {
+        "anonymous:${java.util.UUID.randomUUID()}"
     }
-
-    val (isNew, state) = terminalState
+    val isNew = !TerminalStateRegistry.contains(windowId, registryId)
+    val state = remember(windowId, registryId, resetGeneration, lifetime.generation) {
+        TerminalStateRegistry.getOrCreate(windowId, registryId)
+    } ?: return
+    if (terminalId == null) {
+        DisposableEffect(windowId, registryId) {
+            onDispose { TerminalStateRegistry.remove(windowId, registryId) }
+        }
+    }
 
     key(resetGeneration) {
         HostTerminalSurface(
@@ -350,7 +360,7 @@ internal fun TerminalContentImpl(
                     initialCommand = if (isNew) initialCommand else null,
                     workingDirectory = if (isNew) workingDirectory else null,
                     onExit = { _ ->
-                        terminalId?.let { TerminalStateRegistry.remove(windowId, it) }
+                        TerminalStateRegistry.remove(windowId, registryId)
                         onExit()
                     },
                     onLinkClick = { info -> handleTerminalLinkClick(info, scope, terminalId, windowId) },

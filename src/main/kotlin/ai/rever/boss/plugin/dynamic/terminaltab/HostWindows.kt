@@ -50,11 +50,11 @@ internal object HostWindows {
         }
     }
 
-    fun unregister(context: PluginContext) {
+    fun unregister(context: PluginContext): Boolean =
         synchronized(lock) {
             contexts.entries.removeAll { it.value === context }
+            contexts.isEmpty()
         }
-    }
 
     /** A terminal in [windowId] saw its window gain focus. */
     fun noteFocused(windowId: String) {

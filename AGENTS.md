@@ -241,3 +241,11 @@ against API 1.0.97 for terminal-link destination requests. Local testing targets
 Active host glass also makes `HostTerminalThemeBridge` choose BossTerm’s bundled Liquid Glass
 Light/Dark theme before matching background colors, since Liquid Glass shares Blueprint’s floor.
 Use the builtin intact for ANSI, selection and chrome colors; host tint still owns transparency.
+
+## Terminal shutdown
+
+Plugin disposal fences terminal creation and sweeps retained states on the EDT, without
+emitting the user-reset generation. Both named and anonymous embedded terminals belong
+to that lifetime. Use BossTerm's `disposeForUnload()` for the sweep and the final owner's
+`TerminalRuntimeLifecycle.shutdownForUnload()` barrier to drain retired engines before
+the classloader closes. Re-registration activates the runtime before reopening UI admission.
