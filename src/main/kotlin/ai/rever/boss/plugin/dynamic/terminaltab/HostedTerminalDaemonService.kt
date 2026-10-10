@@ -10,7 +10,7 @@ import kotlinx.serialization.json.put
 
 /** Background entry point. It intentionally receives no PluginContext, windows or UI callbacks. */
 class HostedTerminalDaemonService : DaemonService {
-    private var pool: HostedTerminalPool? = null
+    @Volatile private var pool: HostedTerminalPool? = null
 
     override suspend fun start(context: DaemonServiceContext, configuration: Map<String, String>): Map<String, String> {
         val directory = requireNotNull(configuration["settingsDirectory"]) { "Missing terminal settings directory" }

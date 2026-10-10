@@ -12,7 +12,12 @@ windows on the same workspace, slots follow first-terminal composition order; af
 close, a reopened window may reclaim a different former window's surface. Workspace switching
 keeps an existing terminal's original identity; reset to create a terminal for the new workspace.
 Explicit
-terminal removal/reset closes that surface's daemon PTYs. A new worker restores empty
+terminal removal/reset queues that surface's daemon PTY close even if connection is still
+pending. Transient close failures retry automatically (three attempts), including anonymous
+terminals. Failed intents remain pending; a replacement or unload retry attempts them again.
+Unload uses a five-second connection-job drain while processing UI events. An incomplete drain
+or unresolved close defers unloading and retains the active classloader; it never reports
+success and drops the pending close. Local opt-out never issues daemon close requests. A new worker restores empty
 surfaces after reboot; it does not resume an interrupted OS process.
 
 The host keeps MCP, account identity and voice credentials. Hosted attach traffic cannot

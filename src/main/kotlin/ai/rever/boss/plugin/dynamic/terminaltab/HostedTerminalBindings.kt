@@ -2,6 +2,7 @@ package ai.rever.boss.plugin.dynamic.terminaltab
 
 import ai.rever.boss.plugin.api.DaemonServiceConnection
 import ai.rever.boss.plugin.api.DaemonServiceProvider
+import ai.rever.boss.plugin.api.PluginUnloadDeferredException
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
 import ai.rever.bossterm.compose.TabbedTerminalState
@@ -26,6 +27,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -40,7 +43,7 @@ import java.util.concurrent.ConcurrentHashMap
 internal object HostedTerminalBindings {
     enum class Status { CONNECTING, DAEMON, LOCAL, FAILED }
     private class Binding(val windowId: String, val identity: String, val cwd: String?, val command: String?,
-        val provider: DaemonServiceProvider?) {
+        val provider: DaemonServiceProvider?, val usesDaemon: Boolean) {
         val status = MutableStateFlow(Status.CONNECTING)
         @Volatile var job: Job? = null
         @Volatile var closeJob: Job? = null
@@ -50,7 +53,10 @@ internal object HostedTerminalBindings {
     private val logger = BossLogger.forComponent("HostedTerminalBindings")
     private val bindings = ConcurrentHashMap<TabbedTerminalState, Binding>()
     private val closing = ConcurrentHashMap<String, Binding>()
-    private val identityLocks = ConcurrentHashMap<String, Mutex>()
+    // Fixed stripes avoid retaining one lock per anonymous terminal forever. Always acquire
+    // the lifetime lock before a binding monitor; never hold a binding monitor across IPC.
+    private val identityLocks = Array(64) { Mutex() }
+    private fun identityLock(identity: String) = identityLocks[(identity.hashCode() and Int.MAX_VALUE) % identityLocks.size]
     private val retirementScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val retirements = ConcurrentHashMap<Job, String>()
 
@@ -58,9 +64,9 @@ internal object HostedTerminalBindings {
         provider: DaemonServiceProvider? = HostWindows.daemonFor(windowId),
         daemonEnabled: Boolean = SettingsManager.instance.settings.value.daemonEnabled): MutableStateFlow<Status> {
         bindings[state]?.let { return it.status }
-        val binding = Binding(windowId, HostWindows.terminalIdentity(windowId, terminalId), cwd, command, provider)
+        val binding = Binding(windowId, HostWindows.terminalIdentity(windowId, terminalId), cwd, command, provider, provider != null && daemonEnabled)
         bindings.putIfAbsent(state, binding)?.let { return it.status }
-        if (provider == null || !daemonEnabled) binding.status.value = Status.LOCAL
+        if (!binding.usesDaemon) binding.status.value = Status.LOCAL
         else start(state, binding)
         return binding.status
     }
@@ -75,12 +81,9 @@ internal object HostedTerminalBindings {
                         // Reset/remove returns immediately on the EDT. A replacement must wait for
                         // its predecessor's close, and retry a failed close before attaching again.
                         closing[binding.identity]?.closeJob?.join()
-                        identityLocks.computeIfAbsent(binding.identity) { Mutex() }.withLock {
-                            val worker = checkNotNull(binding.provider).connect("terminals",
-                                HostedTerminalDaemonService::class.java.name,
-                                mapOf("settingsDirectory" to resolvedTerminalSettingsDirectory()))
+                        identityLock(binding.identity).withLock {
+                            val worker = connect(binding)
                             binding.worker = worker
-                            check(worker.endpoints["attachProtocol"] == DaemonAttachProtocol.PROTOCOL_VERSION.toString())
                             closing[binding.identity]?.let { previous ->
                                 // Reconnect first: a failed close may refer to a daemon that died.
                                 worker.request("close", previous.identity)
@@ -128,8 +131,9 @@ internal object HostedTerminalBindings {
 
     fun detach(state: TabbedTerminalState, forUnload: Boolean) {
         val binding = bindings.remove(state) ?: return
-        val job = retire(binding, closeSurface = false)
-        if (forUnload) runBlocking(Dispatchers.IO) { job.join() }
+        // The external drain waits once after every state has been retired. Never join here
+        // while the EDT still has more states to cancel/dispose.
+        retire(binding, closeSurface = false)
     }
 
     private fun retire(binding: Binding, closeSurface: Boolean): Job = synchronized(binding) {
@@ -137,17 +141,28 @@ internal object HostedTerminalBindings {
         binding.job?.cancel()
         val job = retirementScope.launch(start = CoroutineStart.LAZY) {
             binding.job?.join()
-            if (closeSurface) {
-                try {
-                    identityLocks.computeIfAbsent(binding.identity) { Mutex() }.withLock {
-                        binding.worker?.request("close", binding.identity)
-                        closing.remove(binding.identity, binding)
+            if (closeSurface && binding.usesDaemon) {
+                repeat(3) { attempt ->
+                    try {
+                        identityLock(binding.identity).withLock {
+                            if (closing[binding.identity] !== binding) return@launch
+                            // Even a cancelled initial connect may refer to an existing PTY.
+                            // Reconnect on every retry instead of using a dead/stale handle.
+                            connect(binding).request("close", binding.identity)
+                            closing.remove(binding.identity, binding)
+                        }
+                        return@launch
+                    } catch (cancelled: CancellationException) { throw cancelled }
+                    catch (failure: Exception) {
+                        logFailure("Close", failure)
+                        if (attempt < 2) delay(100L * (attempt + 1))
                     }
-                } catch (cancelled: CancellationException) { throw cancelled }
-                catch (failure: Exception) { logFailure("Close", failure) }
+                }
+                // Retain the failed intent. A replacement or another unload attempt can retry;
+                // the unload barrier refuses success while any explicit close is unresolved.
             }
         }
-        if (closeSurface) {
+        if (closeSurface && binding.usesDaemon) {
             binding.closeJob = job
             closing[binding.identity] = binding
         }
@@ -161,10 +176,24 @@ internal object HostedTerminalBindings {
         job.invokeOnCompletion { retirements.remove(job) }
     }
 
-    /** Only the external unload barrier waits; ordinary tab close and reset remain responsive. */
-    fun drainForUnload(windowId: String?, lastWindow: Boolean) {
-        val jobs = retirements.filterValues { lastWindow || it == windowId.orEmpty() }.keys.toList()
-        runBlocking(Dispatchers.IO) { jobs.forEach { it.join() } }
+    private suspend fun connect(binding: Binding): DaemonServiceConnection {
+        val worker = checkNotNull(binding.provider).connect("terminals",
+            HostedTerminalDaemonService::class.java.name,
+            mapOf("settingsDirectory" to resolvedTerminalSettingsDirectory()))
+        check(worker.endpoints["attachProtocol"] == DaemonAttachProtocol.PROTOCOL_VERSION.toString())
+        return worker
+    }
+
+    /** Bounded external barrier; a failed drain retains the plugin loader for a later retry. */
+    fun drainForUnload(windowId: String?, lastWindow: Boolean, timeoutMillis: Long = 5_000) {
+        fun matches(id: String) = lastWindow || id == windowId.orEmpty()
+        closing.values.filter { matches(it.windowId) && it.closeJob?.isCompleted == true }
+            .forEach { retire(it, closeSurface = true) }
+        val jobs = retirements.filterValues { matches(it) }.keys.toList()
+        awaitTerminalDrain(timeoutMillis) { jobs.forEach { it.join() } }
+        if (closing.values.any { matches(it.windowId) }) {
+            throw PluginUnloadDeferredException("Background terminal close is pending; retry unload")
+        }
     }
 
     private fun logFailure(operation: String, failure: Exception) {
@@ -179,8 +208,9 @@ internal fun resolvedTerminalSettingsDirectory(): String =
 /** A failed connection never falls back to a second shell that might repeat the queued command. */
 @Composable
 internal fun terminalDaemonMode(state: TabbedTerminalState, windowId: String, terminalId: String,
-    cwd: String?, command: String?): Boolean? {
-    val binding = remember(state) { HostedTerminalBindings.bind(state, windowId, terminalId, cwd, command) }
+    cwd: String?, command: String?, daemonEnabledOverride: Boolean? = null): Boolean? {
+    val binding = remember(state) { HostedTerminalBindings.bind(state, windowId, terminalId, cwd, command,
+        daemonEnabled = daemonEnabledOverride ?: SettingsManager.instance.settings.value.daemonEnabled) }
     val status by binding.collectAsState()
     return when (status) {
         HostedTerminalBindings.Status.DAEMON -> true

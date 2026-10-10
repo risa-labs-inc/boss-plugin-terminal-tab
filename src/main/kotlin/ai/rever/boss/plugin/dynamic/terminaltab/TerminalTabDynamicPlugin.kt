@@ -481,6 +481,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
                 }
             } catch (t: Throwable) {
                 mcpLogger.warn(LogCategory.TERMINAL, "Error disposing retained terminal states", error = t)
+                throw ai.rever.boss.plugin.api.PluginUnloadDeferredException("Terminal cleanup is incomplete", t)
             }
         }
         runCatching { TerminalTitleBarBridge.unregisterProvider(this) }

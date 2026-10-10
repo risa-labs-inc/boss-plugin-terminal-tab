@@ -2,10 +2,13 @@ package ai.rever.boss.plugin.dynamic.terminaltab
 
 import ai.rever.boss.plugin.api.DaemonServiceConnection
 import ai.rever.boss.plugin.api.DaemonServiceProvider
+import ai.rever.boss.plugin.api.PluginUnloadDeferredException
 import ai.rever.bossterm.compose.TabbedTerminalState
 import ai.rever.bossterm.compose.daemon.DaemonAttachProtocol
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -19,6 +22,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -40,7 +44,7 @@ class HostedTerminalBindingsTest {
         override suspend fun stop() = error("UI must not stop the shared worker")
     }
 
-    private class Provider(var worker: Worker) : DaemonServiceProvider {
+    private class Provider(@Volatile var worker: Worker) : DaemonServiceProvider {
         override suspend fun connect(serviceId: String, entryPoint: String, configuration: Map<String, String>): DaemonServiceConnection {
             assertTrue(configuration.getValue("settingsDirectory").isNotBlank())
             return worker
@@ -104,7 +108,7 @@ class HostedTerminalBindingsTest {
         assertFalse(TabbedTerminalStateRegistry.contains("window", "two"))
         assertEquals(generation + 1, TabbedTerminalStateRegistry.resetGeneration.value)
         HostedTerminalBindings.drainForUnload(null, lastWindow = true)
-        assertEquals(2, worker.closes.get())
+        assertEquals(3, worker.closes.get())
     }
 
     @Test
@@ -142,16 +146,104 @@ class HostedTerminalBindingsTest {
 
     @Test
     fun `failed close reconnects to a fresh worker before replacement attach`() = runBlocking<Unit> {
-        val oldWorker = Worker().apply { close = { error("Daemon unavailable") } }
+        val failed = CompletableDeferred<Unit>()
+        val oldWorker = Worker().apply { close = { failed.complete(Unit); error("Daemon unavailable") } }
         val provider = Provider(oldWorker)
         ready(bind(state("restart"), "restart", provider))
         TabbedTerminalStateRegistry.remove("window", "restart")
-        HostedTerminalBindings.drainForUnload(null, lastWindow = true)
+        withTimeout(5_000) { failed.await() }
         val freshWorker = Worker()
         provider.worker = freshWorker
         ready(bind(state("restart"), "restart", provider))
         assertEquals(1, freshWorker.closes.get())
         assertEquals(1, freshWorker.attachments.get())
+    }
+
+    @Test
+    fun `anonymous close retries without a replacement bind`() = runBlocking<Unit> {
+        val worker = Worker()
+        val failOnce = AtomicBoolean(true)
+        worker.close = { if (failOnce.getAndSet(false)) error("Transient transport failure") }
+        ready(bind(state("anonymous:unique"), "anonymous:unique", Provider(worker)))
+        TabbedTerminalStateRegistry.remove("window", "anonymous:unique")
+        withTimeout(5_000) { while (worker.closes.get() < 2) delay(10) }
+        HostedTerminalBindings.drainForUnload(null, lastWindow = true)
+        assertEquals(2, worker.closes.get())
+    }
+
+    @Test
+    fun `exhausted close retries defer unload and can recover on a later attempt`() = runBlocking<Unit> {
+        val worker = Worker().apply { close = { error("Persistent transport failure") } }
+        ready(bind(state("pending-close"), "pending-close", Provider(worker)))
+        TabbedTerminalStateRegistry.remove("window", "pending-close")
+        try {
+            assertFailsWith<PluginUnloadDeferredException> {
+                HostedTerminalBindings.drainForUnload(null, lastWindow = true)
+            }
+            assertTrue(worker.closes.get() >= 3)
+        } finally { worker.close = {} }
+        HostedTerminalBindings.drainForUnload(null, lastWindow = true)
+    }
+
+    @Test
+    fun `removal during connect still closes a previously existing daemon surface`() = runBlocking<Unit> {
+        val entered = CompletableDeferred<Unit>()
+        val never = CompletableDeferred<Unit>()
+        val worker = Worker()
+        val calls = AtomicInteger()
+        val provider = object : DaemonServiceProvider {
+            override suspend fun connect(serviceId: String, entryPoint: String, configuration: Map<String, String>): DaemonServiceConnection {
+                if (calls.incrementAndGet() == 1) { entered.complete(Unit); never.await() }
+                return worker
+            }
+        }
+        val status = bind(state("existing"), "existing", provider)
+        withTimeout(5_000) { entered.await() }
+        assertEquals(HostedTerminalBindings.Status.CONNECTING, status.value)
+        TabbedTerminalStateRegistry.remove("window", "existing")
+        HostedTerminalBindings.drainForUnload(null, lastWindow = true)
+        assertEquals(1, worker.closes.get())
+        assertEquals(0, worker.attachments.get())
+    }
+
+    @Test
+    fun `unload timeout processes UI events and refuses success until IO drains`() = runBlocking<Unit> {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val eventProcessed = AtomicBoolean()
+        val worker = Worker()
+        val provider = object : DaemonServiceProvider {
+            override suspend fun connect(serviceId: String, entryPoint: String, configuration: Map<String, String>): DaemonServiceConnection {
+                entered.complete(Unit)
+                withContext(NonCancellable) { release.await() }
+                return worker
+            }
+        }
+        bind(state("blocked"), "blocked", provider)
+        withTimeout(5_000) { entered.await() }
+        try {
+            SwingUtilities.invokeAndWait {
+                HostedTerminalBindings.detach(state("blocked"), forUnload = true)
+                SwingUtilities.invokeLater { eventProcessed.set(true) }
+                assertFailsWith<PluginUnloadDeferredException> {
+                    HostedTerminalBindings.drainForUnload(null, lastWindow = true, timeoutMillis = 100)
+                }
+                assertTrue(eventProcessed.get(), "The EDT must keep processing events during unload")
+            }
+        } finally { release.complete(Unit) }
+        HostedTerminalBindings.drainForUnload(null, lastWindow = true)
+    }
+
+    @Test
+    fun `opted out terminals never connect or issue a daemon close`() {
+        val worker = Worker()
+        val state = state("opt-out")
+        val status = HostedTerminalBindings.bind(state, "window", "opt-out", null, null, Provider(worker), daemonEnabled = false)
+        assertEquals(HostedTerminalBindings.Status.LOCAL, status.value)
+        TabbedTerminalStateRegistry.remove("window", "opt-out")
+        HostedTerminalBindings.drainForUnload(null, lastWindow = true)
+        assertEquals(0, worker.attachments.get())
+        assertEquals(0, worker.closes.get())
     }
 
     @Test

@@ -188,7 +188,8 @@ internal fun PersistentTabbedTerminalContentImpl(
     onTitleChange: ((String) -> Unit)?,
     onLinkClick: ((url: String, linkType: String) -> Boolean)?,
     sessionEventPublisher: ((sessionId: String, eventType: ai.rever.boss.plugin.api.TerminalSessionEventType, terminalId: String?, windowId: String?) -> Unit)? = null,
-    settingsOverride: TerminalSettingsOverride? = null
+    settingsOverride: TerminalSettingsOverride? = null,
+    daemonEnabledOverride: Boolean? = null
 ) {
     val resetGeneration by TabbedTerminalStateRegistry.resetGeneration.collectAsState()
     val settings by SettingsManager.instance.settings.collectAsState()
@@ -212,7 +213,7 @@ internal fun PersistentTabbedTerminalContentImpl(
     } ?: return
     val effectiveWorkingDir = if (isNew) workingDirectory else null
     val daemonMode = terminalDaemonMode(state, windowId, terminalId, effectiveWorkingDir,
-        if (isNew) initialCommand else null) ?: return
+        if (isNew) initialCommand else null, daemonEnabledOverride) ?: return
 
     LaunchedEffect(settings.onboardingCompleted) {
         if (!settings.onboardingCompleted) TerminalPluginContextHolder.setupSupervisor?.requestSetup(windowId)
@@ -356,7 +357,8 @@ internal fun TerminalContentImpl(
         }
         PersistentTabbedTerminalContentImpl(hostedId, initialCommand, workingDirectory, onExit,
             onShowSettings = {}, onTitleChange = null, onLinkClick = null,
-            settingsOverride = remember { TerminalSettingsOverride(alwaysShowTabBar = false) })
+            settingsOverride = remember { TerminalSettingsOverride(alwaysShowTabBar = false) },
+            daemonEnabledOverride = useDaemon)
         return
     }
     val settings by SettingsManager.instance.settings.collectAsState()
