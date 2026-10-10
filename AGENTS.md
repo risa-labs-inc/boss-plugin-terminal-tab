@@ -8,7 +8,7 @@ Terminal tab using BossTerm library for terminal emulation
 
 - **Plugin ID**: `ai.rever.boss.plugin.dynamic.terminaltab`
 - **Main Class**: `ai.rever.boss.plugin.dynamic.terminaltab.TerminalTabDynamicPlugin`
-- **API Version**: 1.0.97 (terminal-link destination requests; verify the released API version)
+- **API Version**: 1.0.99 target (shared daemon provider; verify the released API and host versions)
 
 ## Essential Commands
 
@@ -249,3 +249,5 @@ emitting the user-reset generation. Both named and anonymous embedded terminals 
 to that lifetime. Use BossTerm's `disposeForUnload()` for the sweep and the final owner's
 `TerminalRuntimeLifecycle.shutdownForUnload()` barrier to drain retired engines before
 the classloader closes. Re-registration activates the runtime before reopening UI admission.
+
+See [BOSS daemon terminal lifecycle and validation](docs/boss-daemon-terminals.md).

@@ -87,6 +87,8 @@ internal object TerminalStateLifetime {
         } else null
     }
 
+    fun <T> withRegistryLock(action: () -> T): T = synchronized(lock) { action() }
+
     internal fun resetForTest() {
         val previous = synchronized(lock) {
             mutableState.value = State()
@@ -136,9 +138,13 @@ object TabbedTerminalStateRegistry {
         titleBarTerminals.remove(windowId, terminalId)
         // Unregister from the MCP registry BEFORE dispose so MCP request threads
         // never resolve a tab to a disposed state.
-        states.remove(key(windowId, terminalId))?.let { state ->
-            McpTerminalRegistry.unregister(state)
-            state.dispose()
+        val state = TerminalStateLifetime.withRegistryLock {
+            states.remove(key(windowId, terminalId))?.also { HostedTerminalBindings.close(it) }
+        }
+        state?.let {
+            HostedTerminalBindings.detach(it, forUnload = false)
+            McpTerminalRegistry.unregister(it)
+            it.dispose()
         }
     }
 
@@ -342,6 +348,7 @@ object TabbedTerminalStateRegistry {
     }
 
     private fun disposeState(state: TabbedTerminalState, forUnload: Boolean = false) {
+        HostedTerminalBindings.detach(state, forUnload)
         try {
             McpTerminalRegistry.unregister(state)
         } finally {
@@ -349,13 +356,20 @@ object TabbedTerminalStateRegistry {
         }
     }
 
-    fun resetAllTerminals(): Int = clearAll(forUnload = false)
+    fun resetAllTerminals(): Int {
+        return clearAll(forUnload = false, closeDaemon = true)
+    }
 
     internal fun disposeAllForUnload(): Int = clearAll(forUnload = true)
 
-    private fun clearAll(forUnload: Boolean): Int {
-        val count = states.size
-        val removed = states.keys.toList().mapNotNull { states.remove(it) }
+    private fun clearAll(forUnload: Boolean, closeDaemon: Boolean = false): Int {
+        val removed = TerminalStateLifetime.withRegistryLock {
+            states.keys.toList().mapNotNull { states.remove(it) }.also { removed ->
+                // Publish close barriers before a concurrent caller can create replacement states.
+                if (closeDaemon) removed.forEach { HostedTerminalBindings.close(it) }
+            }
+        }
+        val count = removed.size
         titleBarTerminals.clear()
         sidebarConfigToTabId.clear()
         try {

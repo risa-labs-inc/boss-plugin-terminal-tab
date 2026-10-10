@@ -79,6 +79,35 @@ class HostWindowsTest {
         } as PluginContext
     }
 
+    @Test
+    fun `terminal mode survives recomposition until reset or UI reload`() {
+        assertTrue(HostWindows.terminalMode("window", "terminal", 0) { true })
+        assertTrue(HostWindows.terminalMode("window", "terminal", 0) { false })
+        assertFalse(HostWindows.terminalMode("window", "terminal", 1) { false })
+    }
+
+    @Test
+    fun `daemon identities stay bounded for long runner ids`() {
+        val first = HostWindows.terminalIdentity("window", "a".repeat(2000))
+        assertTrue(first.length < 512)
+        assertTrue(first != HostWindows.terminalIdentity("window", "a".repeat(1999) + "b"))
+    }
+
+    @Test
+    fun `daemon surfaces survive reopened windows without merging live siblings`() {
+        val first = context("old-window")
+        HostWindows.register(first)
+        HostWindows.register(context("sibling"))
+        val original = HostWindows.terminalIdentity("old-window", "sidebar")
+        val sibling = HostWindows.terminalIdentity("sibling", "sidebar")
+        assertTrue(original != sibling)
+        HostWindows.unregister(first)
+        HostWindows.register(context("reopened-window"))
+        assertEquals(original, HostWindows.terminalIdentity("reopened-window", "sidebar"))
+        assertEquals(sibling, HostWindows.terminalIdentity("sibling", "sidebar"))
+        assertTrue(original != HostWindows.terminalIdentity("reopened-window", "different-tab"))
+    }
+
     private fun cli(args: JsonObject): CallToolResult =
         runBlocking { bossHostMcpToolDefs.first { it.name == "cli" }.handler(args) }
 
