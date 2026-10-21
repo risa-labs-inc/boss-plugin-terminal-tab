@@ -1,5 +1,7 @@
 package ai.rever.boss.plugin.dynamic.terminaltab
 
+import ai.rever.boss.plugin.logging.BossLogger
+import ai.rever.boss.plugin.logging.LogCategory
 import ai.rever.bossterm.compose.mcp.McpTerminalRegistry
 import io.modelcontextprotocol.kotlin.sdk.server.ClientConnection
 import io.modelcontextprotocol.kotlin.sdk.server.RegisteredTool
@@ -24,6 +26,7 @@ internal fun Server.acceptHostTabIds(
     val names = tools.values.filter { it.takesTabId() }.map { it.tool.name }.toSet()
     names.forEach { wrapTabIdTool(it, resolve, known) }
     // manage_tools re-enables a tool by registering BossTerm's own handler again; wrap it back.
+    // A call landing between the remove and the add sees "tool not found"; only here and at creation.
     tools["manage_tools"]?.let { manage ->
         replaceHandler(manage) { request ->
             manage.handler(this, request).also { names.forEach { wrapTabIdTool(it, resolve, known) } }
@@ -40,6 +43,9 @@ internal fun hostTabIdResolved(request: CallToolRequest, resolve: (String) -> St
     return request.copy(params = request.params.copy(arguments = JsonObject(args + ("tab_id" to JsonPrimitive(resolved)))))
 }
 
+private val logger = BossLogger.forComponent("TerminalTabMcpHostTabIds")
+
+// Identity set of our wrapper lambdas; each Server holds its handlers strongly, so entries live as long as needed.
 private val wrappers: MutableSet<Any> = Collections.synchronizedSet(Collections.newSetFromMap(WeakHashMap()))
 
 private fun Server.wrapTabIdTool(name: String, resolve: (String) -> String?, known: (String) -> Boolean) {
@@ -58,6 +64,9 @@ private fun Server.replaceHandler(
         removeTool(registered.tool.name)
         if (runCatching { addTool(registered.tool, handler) }.isSuccess) return
     }
+    // Never leave the tool missing: at worst it keeps BossTerm's own handler and takes only BossTerm ids.
+    if (tools[registered.tool.name] == null) runCatching { addTool(registered.tool, registered.handler) }
+    logger.warn(LogCategory.TERMINAL, "Could not wrap ${registered.tool.name} to accept host tab ids")
 }
 
 private fun RegisteredTool.takesTabId(): Boolean = tool.inputSchema.properties?.containsKey("tab_id") == true
