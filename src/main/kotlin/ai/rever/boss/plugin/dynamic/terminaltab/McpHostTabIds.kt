@@ -14,23 +14,26 @@ import kotlinx.serialization.json.contentOrNull
 import java.util.Collections
 import java.util.WeakHashMap
 
+private val logger = BossLogger.forComponent("TerminalTabMcpHostTabIds")
+
+// Identity set of our wrapper lambdas; each Server holds its handlers strongly, so entries live as long as needed.
+private val wrappers: MutableSet<Any> = Collections.synchronizedSet(Collections.newSetFromMap(WeakHashMap()))
+
 /**
  * BOSS names a terminal by its host tab id (`terminal-…`, from tabs_list and open_terminal), while
- * BossTerm's tools only know their own tab ids. Wraps every built-in that takes `tab_id` so a host id
- * reaches it as that terminal's active tab. Call before any host tool is added: those take host ids.
+ * BossTerm's tools only know their own tab ids. Wraps BossTerm's own tools that take `tab_id` so a
+ * host id reaches them as that terminal's active tab; this plugin's and the host's tools are left as
+ * they are. See AGENTS.md, "Host tab ids on BossTerm's tools".
  */
 internal fun Server.acceptHostTabIds(
     resolve: (String) -> String? = TabbedTerminalStateRegistry::activeTabIdForHost,
     known: (String) -> Boolean = { McpTerminalRegistry.findTab(it) != null },
 ) {
-    val names = tools.values.filter { it.takesTabId() }.map { it.tool.name }.toSet()
-    names.forEach { wrapTabIdTool(it, resolve, known) }
+    wrapTabIdTools(resolve, known)
     // manage_tools re-enables a tool by registering BossTerm's own handler again; wrap it back.
     // A call landing between the remove and the add sees "tool not found"; only here and at creation.
     tools["manage_tools"]?.let { manage ->
-        replaceHandler(manage) { request ->
-            manage.handler(this, request).also { names.forEach { wrapTabIdTool(it, resolve, known) } }
-        }
+        replaceHandler(manage) { request -> manage.handler(this, request).also { wrapTabIdTools(resolve, known) } }
     }
 }
 
@@ -43,10 +46,10 @@ internal fun hostTabIdResolved(request: CallToolRequest, resolve: (String) -> St
     return request.copy(params = request.params.copy(arguments = JsonObject(args + ("tab_id" to JsonPrimitive(resolved)))))
 }
 
-private val logger = BossLogger.forComponent("TerminalTabMcpHostTabIds")
-
-// Identity set of our wrapper lambdas; each Server holds its handlers strongly, so entries live as long as needed.
-private val wrappers: MutableSet<Any> = Collections.synchronizedSet(Collections.newSetFromMap(WeakHashMap()))
+/** Read from the live set each pass, so a tool disabled at creation is wrapped once it is enabled. */
+private fun Server.wrapTabIdTools(resolve: (String) -> String?, known: (String) -> Boolean) =
+    tools.values.filter { it.tool.name in bossTermOwnToolNames && it.takesTabId() }
+        .forEach { wrapTabIdTool(it.tool.name, resolve, known) }
 
 private fun Server.wrapTabIdTool(name: String, resolve: (String) -> String?, known: (String) -> Boolean) {
     val registered = tools[name] ?: return

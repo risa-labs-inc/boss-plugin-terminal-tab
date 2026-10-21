@@ -134,7 +134,9 @@ object TabbedTerminalStateRegistry {
 
     /**
      * The BossTerm tab an MCP caller means by a host tab id (`terminal-…`, or the bare id
-     * `open_terminal` reports as `terminalId`): that terminal's active inner tab.
+     * `open_terminal` reports as `terminalId`): that terminal's active inner tab. Read per call, so
+     * if the person switches inner tabs between two calls they reach different shells; an agent that
+     * needs one exact shell should use that tab's own id from `list_tabs`.
      */
     fun activeTabIdForHost(hostTabId: String): String? = stateForHost(hostTabId)?.activeTabId
 

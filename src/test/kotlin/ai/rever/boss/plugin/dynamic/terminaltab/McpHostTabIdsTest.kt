@@ -87,12 +87,52 @@ class McpHostTabIdsTest {
         server.addTool(original.tool, original.handler)
         assertTrue(hostId in server.call("list_panes", hostId))
 
-        runBlocking {
-            server.tools.getValue("manage_tools").handler(
-                connection,
-                CallToolRequest(CallToolRequestParams(name = "manage_tools", arguments = buildJsonObject { put("operation", "list") })),
-            )
-        }
+        manageToolsList(server)
         assertTrue("bossterm-tab" in server.call("list_panes", hostId))
+    }
+
+    @Test
+    fun `a tool disabled at creation is wrapped once manage_tools runs`() {
+        val original = BossTermMcpServer(config = BossTermMcpConfig()).createServer().tools.getValue("read_scrollback")
+        val server = BossTermMcpServer(
+            config = BossTermMcpConfig(additionalTools = { it.removeTool("read_scrollback"); it.acceptHostTabIds(resolve, known) }),
+        ).createServer()
+        // BossTerm registers it again when it is enabled.
+        server.addTool(original.tool, original.handler)
+        assertTrue(hostId in server.call("read_scrollback", hostId))
+
+        manageToolsList(server)
+        assertTrue("bossterm-tab" in server.call("read_scrollback", hostId))
+    }
+
+    @Test
+    fun `tools that are not BossTerm's own keep taking host ids as they are`() {
+        val server = BossTermMcpServer(
+            config = BossTermMcpConfig(additionalTools = {
+                it.addTool(
+                    io.modelcontextprotocol.kotlin.sdk.types.Tool(
+                        name = "tab_focus",
+                        inputSchema = io.modelcontextprotocol.kotlin.sdk.types.ToolSchema(
+                            properties = buildJsonObject { put("tab_id", buildJsonObject { put("type", "string") }) },
+                        ),
+                    ),
+                ) { request ->
+                    io.modelcontextprotocol.kotlin.sdk.types.CallToolResult(
+                        content = listOf(TextContent("got ${request.arguments?.get("tab_id")}")),
+                    )
+                }
+                it.acceptHostTabIds(resolve, known)
+            }),
+        ).createServer()
+        assertTrue(hostId in server.call("tab_focus", hostId))
+        manageToolsList(server)
+        assertTrue(hostId in server.call("tab_focus", hostId))
+    }
+
+    private fun manageToolsList(server: Server) = runBlocking {
+        server.tools.getValue("manage_tools").handler(
+            connection,
+            CallToolRequest(CallToolRequestParams(name = "manage_tools", arguments = buildJsonObject { put("operation", "list") })),
+        )
     }
 }
