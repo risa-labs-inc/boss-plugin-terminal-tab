@@ -132,6 +132,19 @@ object TabbedTerminalStateRegistry {
 
     fun get(windowId: String, terminalId: String): TabbedTerminalState? = states[key(windowId, terminalId)]
 
+    /**
+     * The BossTerm tab an MCP caller means by a host tab id (`terminal-…`, or the bare id
+     * `open_terminal` reports as `terminalId`): that terminal's active inner tab.
+     */
+    fun activeTabIdForHost(hostTabId: String): String? = stateForHost(hostTabId)?.activeTabId
+
+    internal fun stateForHost(hostTabId: String): TabbedTerminalState? {
+        val terminalId = if (hostTabId.startsWith(HOST_PREFIX)) hostTabId else HOST_PREFIX + hostTabId
+        return states.entries.firstOrNull { it.key.endsWith(":$terminalId") }?.value
+    }
+
+    private const val HOST_PREFIX = "terminal-"
+
     fun remove(windowId: String, terminalId: String) {
         titleBarTerminals.remove(windowId, terminalId)
         // Unregister from the MCP registry BEFORE dispose so MCP request threads
