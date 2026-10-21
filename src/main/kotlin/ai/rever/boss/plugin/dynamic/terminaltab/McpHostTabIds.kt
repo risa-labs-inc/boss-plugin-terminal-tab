@@ -16,6 +16,9 @@ import java.util.WeakHashMap
 
 private val logger = BossLogger.forComponent("TerminalTabMcpHostTabIds")
 
+// Closing is the host's job (tab_close); a host id would otherwise close whichever inner tab has focus.
+private val NOT_RESOLVED = setOf("close_panel")
+
 // Identity set of our wrapper lambdas; each Server holds its handlers strongly, so entries live as long as needed.
 private val wrappers: MutableSet<Any> = Collections.synchronizedSet(Collections.newSetFromMap(WeakHashMap()))
 
@@ -48,7 +51,7 @@ internal fun hostTabIdResolved(request: CallToolRequest, resolve: (String) -> St
 
 /** Read from the live set each pass, so a tool disabled at creation is wrapped once it is enabled. */
 private fun Server.wrapTabIdTools(resolve: (String) -> String?, known: (String) -> Boolean) =
-    tools.values.filter { it.tool.name in bossTermOwnToolNames && it.takesTabId() }
+    tools.values.filter { it.tool.name in bossTermOwnToolNames && it.tool.name !in NOT_RESOLVED && it.takesTabId() }
         .forEach { wrapTabIdTool(it.tool.name, resolve, known) }
 
 private fun Server.wrapTabIdTool(name: String, resolve: (String) -> String?, known: (String) -> Boolean) {

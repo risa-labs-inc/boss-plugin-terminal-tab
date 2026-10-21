@@ -6,7 +6,10 @@ import io.modelcontextprotocol.kotlin.sdk.server.ClientConnection
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequestParams
+import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
+import io.modelcontextprotocol.kotlin.sdk.types.Tool
+import io.modelcontextprotocol.kotlin.sdk.types.ToolSchema
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -110,14 +113,14 @@ class McpHostTabIdsTest {
         val server = BossTermMcpServer(
             config = BossTermMcpConfig(additionalTools = {
                 it.addTool(
-                    io.modelcontextprotocol.kotlin.sdk.types.Tool(
+                    Tool(
                         name = "tab_focus",
-                        inputSchema = io.modelcontextprotocol.kotlin.sdk.types.ToolSchema(
+                        inputSchema = ToolSchema(
                             properties = buildJsonObject { put("tab_id", buildJsonObject { put("type", "string") }) },
                         ),
                     ),
                 ) { request ->
-                    io.modelcontextprotocol.kotlin.sdk.types.CallToolResult(
+                    CallToolResult(
                         content = listOf(TextContent("got ${request.arguments?.get("tab_id")}")),
                     )
                 }
@@ -134,5 +137,11 @@ class McpHostTabIdsTest {
             connection,
             CallToolRequest(CallToolRequestParams(name = "manage_tools", arguments = buildJsonObject { put("operation", "list") })),
         )
+    }
+
+    @Test
+    fun `close_panel keeps BossTerm ids only`() {
+        // Not resolved: the raw host id reaches BossTerm, which names it as unknown.
+        assertTrue(hostId in server().call("close_panel", hostId))
     }
 }
