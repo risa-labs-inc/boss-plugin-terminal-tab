@@ -71,6 +71,22 @@ uses in each host shape.
 The voice path is unchanged: BossTerm's voice executor calls `HostMcpTool.handler` directly under
 its own policy and never reaches the registry.
 
+## Host tab ids on BossTerm's tools
+
+Agents get a terminal's host tab id (`terminal-…`) from the host's `tabs_list` and `open_terminal`,
+but BossTerm's tools only know BossTerm tab ids (`list_tabs`). `McpHostTabIds.kt` wraps BossTerm's
+own tools that take `tab_id` (`bossTermOwnToolNames`, found on the live server on each pass) so a
+host id, or the bare `terminalId`, reaches them as that terminal's **active inner tab**, read per
+call: if the person switches inner tabs between two calls they reach different shells. `close_panel`
+is left out, since closing a host terminal is the host's `tab_close`. Main-panel terminals register
+under their host id; the sidebar runner and setup terminals use other keys, so no host id reaches
+them. BossTerm ids
+and ids that resolve to nothing pass through unchanged, so BossTerm's own errors stand. Only
+BossTerm's tools are wrapped; this plugin's tools and the host's (`tab_focus` and friends) take
+host ids as they are. `manage_tools` re-registers BossTerm's own handler when it enables a tool, so
+it is wrapped too and re-wraps after every call; a tool disabled and re-enabled by hand-editing
+`settings.json` keeps BossTerm's handler until the server restarts.
+
 ### Reach the host through the plugin API, never by reflection
 
 Since BOSS 9.5.25 (BossConsole `dc443ee9c`) the plugin classloader refuses every host class

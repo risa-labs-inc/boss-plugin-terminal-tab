@@ -385,6 +385,7 @@ class TerminalTabDynamicPlugin : DynamicPlugin {
                 // endpoint as the built-in terminal tools (see McpHostTools.kt),
                 // plus the dynamic bridge for plugin-contributed tools.
                 additionalTools = { server ->
+                    server.acceptHostTabIds()
                     installBossServerTools(server, toolRegistry, hostToolsViaRegistry, mcpScope)
                 }
             )
