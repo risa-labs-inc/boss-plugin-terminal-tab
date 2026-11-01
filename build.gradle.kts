@@ -135,7 +135,9 @@ group = "ai.rever.boss.plugin.dynamic"
 // (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.167.md).
 // 2.5.116: auto-bumped bundled BossTerm to 1.2.183
 // (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.183.md).
-version = "2.5.117"
+// 2.5.118: auto-bumped bundled BossTerm to 1.2.184
+// (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.184.md).
+version = "2.5.118"
 
 java {
     toolchain {
@@ -199,6 +201,7 @@ val pinnedLocalApiJar = provider {
 
 // BossTerm version is now private to this plugin. Bumping bossterm only
 // requires re-releasing this plugin, not BossConsole.
+// 1.2.184: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.184.md).
 // 1.2.183: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.183.md).
 // 1.2.167: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.167.md).
 // 1.2.166: auto-bumped bundled BossTerm (release notes: https://github.com/kshivang/BossTerm/blob/main/docs/release-notes/v1.2.166.md).
@@ -280,7 +283,7 @@ val pinnedLocalApiJar = provider {
 // Includes host account isolation, relay tickets and account viewing preferences.
 // Upstream owns the host-compatible FontUtils/ImageRenderer implementations.
 // CurrentHostFontUtilsTest/CurrentHostImageRendererTest exercise the bundled classes.
-val bosstermVersion = "1.2.183"
+val bosstermVersion = "1.2.184"
 
 repositories {
     if (providers.gradleProperty("useLocalBossTerm").orNull == "true") {
