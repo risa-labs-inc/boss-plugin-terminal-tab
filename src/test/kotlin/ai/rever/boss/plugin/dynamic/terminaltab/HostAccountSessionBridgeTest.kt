@@ -119,6 +119,46 @@ class HostAccountSessionBridgeTest {
         assertEquals(AccountState.SignedOut, bridge.state.value)
     }
 
+    @Test fun `directory and preference polls reuse a recent answer and never across users or failures`() = runBlocking {
+        val auth = Auth().apply { currentUser.value = user("one") }
+        val db = Database()
+        var now = 1_000_000L
+        val bridge = HostAccountSessionBridge(auth, db, clock = { now }) {}
+        bridge.start(this)
+        try {
+            repeat(4) { bridge.list("one", "2026-09-25T00:00:00Z"); now += 14_000 }
+            assertEquals(1, db.calls.count { it.first == "list_terminal_sessions" }, "four 15 s polls inside a minute: one call")
+            now += 5_000
+            bridge.list("one", "2026-09-25T00:00:00Z")
+            assertEquals(2, db.calls.count { it.first == "list_terminal_sessions" }, "expired: asked again")
+            assertTrue(bridge.upsert("one", "{\"share_id\":\"0123456789abcdef\"}"))
+            bridge.list("one", "2026-09-25T00:00:00Z")
+            assertEquals(3, db.calls.count { it.first == "list_terminal_sessions" }, "own publish: fresh directory")
+            db.response = { Result.failure(RuntimeException("offline")) }
+            assertTrue(bridge.delete("one", "0123456789abcdef").not())
+            db.response = { Result.success("[]") }
+            bridge.list("one", "2026-09-25T00:00:00Z")
+            assertEquals(3, db.calls.count { it.first == "list_terminal_sessions" }, "a failed delete changes nothing")
+
+            repeat(3) { bridge.preferences("one"); now += 60_000 }
+            assertEquals(1, db.calls.count { it.first == "get_user_terminal_preferences" })
+            bridge.settingsHandoff("one")
+            bridge.preferences("one"); bridge.preferences("one")
+            assertEquals(3, db.calls.count { it.first == "get_user_terminal_preferences" }, "fresh while the owner may be editing")
+
+            db.response = { Result.failure(RuntimeException("offline")) }
+            now += 10 * 60_000L + 1
+            assertFails { bridge.preferences("one") }
+            db.response = { Result.success("{}") }
+            bridge.preferences("one")
+            assertEquals(5, db.calls.count { it.first == "get_user_terminal_preferences" }, "a failure is not remembered")
+
+            auth.currentUser.value = user("two")
+            assertFailsWith<IllegalStateException> { bridge.list("one", "2026-09-25T00:00:00Z") }
+            assertFailsWith<IllegalStateException> { bridge.preferences("one") }
+        } finally { bridge.close() }
+    }
+
     @Test fun `account switch waits for old link revocation and rejects in flight results`() = runBlocking {
         val auth = Auth().apply { currentUser.value = user("one") }
         val db = Database()
